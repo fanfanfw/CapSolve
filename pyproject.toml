@@ -3,9 +3,9 @@ requires = ["hatchling>=1.24.2"]
 build-backend = "hatchling.build"
 
 [project]
-name = "ezsolver"
+name = "capsolve"
 version = "0.1.0"
-description = "FastAPI service for BUDI95 Turnstile solving and quota lookup."
+description = "FastAPI service for Turnstile solving and upstream result lookup."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ezsolver-api = "service:run"
+capsolve-api = "service:run"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["service.py", "solver.py", "clientsend.py"]

@@ -1,6 +1,6 @@
-# EzSolver BUDI95 API
+# CapSolve
 
-FastAPI service for checking BUDI95 RON95 quota by NRIC. The service opens a real Chrome browser with `nodriver`, solves the Cloudflare Turnstile challenge, posts the generated token to a configured upstream endpoint, and returns the upstream result.
+FastAPI service for solving Cloudflare Turnstile with a real Chrome browser and forwarding the generated token to a configured upstream endpoint. It accepts an NRIC/MyKad value, submits it with the Turnstile token, and returns the upstream result.
 
 ## Requirements
 
@@ -19,7 +19,8 @@ sudo apt install -y xvfb
 ## Installation
 
 ```bash
-cd EzSolver
+git clone https://github.com/fanfanfw/CapSolve.git
+cd CapSolve
 uv sync
 ```
 
@@ -80,7 +81,7 @@ MAX_WORKERS=4
 Development:
 
 ```bash
-uv run ezsolver-api
+uv run capsolve-api
 ```
 
 Production-style single process:
@@ -228,7 +229,7 @@ ps aux | grep uvicorn
 ## Project structure
 
 ```text
-EzSolver/
+CapSolve/
 ├── pyproject.toml  # uv project dependencies and console script
 ├── service.py      # FastAPI API service
 ├── solver.py       # Browser automation and upstream posting logic
