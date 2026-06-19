@@ -1,255 +1,272 @@
-<div align="center">
+# EzSolver BUDI95 API
 
-<h1>⚡ EzSolver</h1>
-
-<p><strong>Fast, cross-platform Cloudflare Turnstile solver powered by a real browser.</strong><br/>
-No paid APIs. No third-party services. Just Python and Chrome.</p>
-
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python)](https://python.org)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)]()
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)]()
-[![Made by](https://img.shields.io/badge/Made%20by-Ismoiloff-orange?style=flat-square)](https://github.com/ismoiloffS)
-
-</div>
-
----
-
-## How it works
-
-EzSolver injects a Turnstile widget directly into the target page using a real Chrome browser via [nodriver](https://github.com/ultrafunkamsterdam/nodriver). Because it runs in a genuine browser with a persistent profile, Cloudflare's fingerprinting sees a real user — no token farms, no captcha services needed.
-
-- **Invisible widgets** resolve automatically within seconds
-- **Managed (checkbox) widgets** are clicked with human-like mouse movement
-- On Linux servers, a virtual display (Xvfb) is started automatically — no `xvfb-run` needed
-- Chrome path and profile directory are auto-detected per OS, with env var overrides
-
----
+FastAPI service for checking BUDI95 RON95 quota by NRIC. The service opens a real Chrome browser with `nodriver`, solves the Cloudflare Turnstile challenge, posts the generated token to a configured upstream endpoint, and returns the upstream result.
 
 ## Requirements
 
-- Python **3.8+**
-- Google Chrome installed
-- `nodriver` Python package
-- **Linux only:** `Xvfb` (for headless servers)
+- Python 3.12+
+- uv
+- Google Chrome or Chromium
+- Linux server: Xvfb
 
----
+Install Xvfb on Ubuntu/Debian:
+
+```bash
+sudo apt update
+sudo apt install -y xvfb
+```
 
 ## Installation
 
-**1. Clone the repo**
-
 ```bash
-git clone https://github.com/ismoiloffS/EzSolver.git
 cd EzSolver
+uv sync
 ```
 
-**2. Install the Python dependency**
-
-```bash
-pip install nodriver
-```
-
-**3. Linux headless servers only — install Xvfb**
-
-```bash
-sudo apt install xvfb
-```
-
-> Windows users: nothing extra needed, Chrome runs normally.
-
----
-
-## Usage
-
-### Option A — Standalone solver (single token)
-
-Run `solver.py` directly from the command line:
-
-```bash
-python solver.py <sitekey> <siteurl>
-```
-
-**Example:**
-
-```bash
-python solver.py 0x4AAAAAAActoBfh_En8yr3T https://example.com/
-```
-
-**Output:**
-
-```
-[solver] clicking Cloudflare iframe at (48, 52)
-0.abc123...longtoken...xyz
-```
-
----
-
-### Option B — Local API service
-
-Start `service.py` once and send as many solve requests as you want via HTTP.
-
-**Start the service:**
-
-```bash
-python service.py
-```
-
-```
-[service] Turnstile solver service running on http://0.0.0.0:8191
-```
-
-**Send a request with the CLI client:**
-
-```bash
-python clientsend.py <sitekey> <siteurl> [timeout]
-```
-
-```bash
-python clientsend.py 0x4AAAAAAActoBfh_En8yr3T https://example.com/
-```
-
-```
-Token (14.32s): 0.abc123...longtoken...xyz
-```
-
-**Or call it from your own code / any HTTP client:**
-
-```bash
-curl -s -X POST http://127.0.0.1:8191/solve \
-  -H "Content-Type: application/json" \
-  -d '{"sitekey":"0x4AAAAAAActoBfh_En8yr3T","siteurl":"https://example.com/"}'
-```
-
-```json
-{
-  "token": "0.abc123...longtoken...xyz",
-  "elapsed": 14.32
-}
-```
-
-**Use it from Python:**
-
-```python
-from clientsend import request_token
-
-token, elapsed = request_token(
-    sitekey="0x4AAAAAAActoBfh_En8yr3T",
-    siteurl="https://example.com/"
-)
-print(f"Got token in {elapsed}s: {token}")
-```
-
----
-
-## API reference
-
-### `POST /solve`
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `sitekey` | string | yes | — | Turnstile sitekey from the target page |
-| `siteurl` | string | yes | — | Full URL of the page with the Turnstile widget |
-| `timeout` | integer | no | `45` | Max seconds to wait for a token |
-
-**Success response `200`:**
-```json
-{ "token": "0.abc...", "elapsed": 12.5 }
-```
-
-**Error response `500`:**
-```json
-{ "error": "Turnstile token not obtained within 45s" }
-```
-
-### `GET /health`
-
-Returns current service status — useful for uptime checks and monitoring queue depth.
-
-```json
-{ "status": "ok", "workers": 4, "active": 2, "queued": 5 }
-```
-
----
-
-## Scaling
-
-EzSolver uses a **worker pool** to handle high volumes safely. Instead of spinning up unlimited Chrome instances (which would crash your machine), requests queue up and are processed as workers free up — no requests are dropped.
-
-```
-500 requests → queue → [worker 1] [worker 2] [worker 3] [worker 4] → tokens
-```
-
-**Rule of thumb:** each Chrome worker uses ~500 MB RAM.
-
-| Machine RAM | Recommended `MAX_WORKERS` | Throughput (est.) |
-|-------------|--------------------------|-------------------|
-| 2 GB | 2 | ~8 tokens/min |
-| 4 GB | 4 (default) | ~16 tokens/min |
-| 8 GB | 8 | ~32 tokens/min |
-| 16 GB+ | 16 | ~64 tokens/min |
-
-Set `MAX_WORKERS` when starting the service:
-
-```bash
-MAX_WORKERS=8 python service.py
-```
-
-Check the queue live via `/health`:
-
-```bash
-curl http://127.0.0.1:8191/health
-```
-
-```json
-{ "status": "ok", "workers": 8, "active": 6, "queued": 47 }
-```
-
-For truly massive scale (thousands of concurrent solves), run **multiple service instances** behind a load balancer (nginx, Caddy, etc.) across several machines.
-
----
+Dependencies are managed through `pyproject.toml`.
 
 ## Configuration
 
-| Environment variable | Default | Description |
-|----------------------|---------|-------------|
-| `CHROME_PATH` | auto-detected | Path to your Chrome executable |
-| `TS_PROFILE_DIR` | `%TEMP%\ts_profile` / `/tmp/ts_profile` | Persistent Chrome profile directory |
-| `PORT` | `8191` | Port the service listens on |
-| `MAX_WORKERS` | `4` | Max concurrent Chrome instances |
+Copy the example environment file and fill in your own values:
 
-**Example:**
 ```bash
-MAX_WORKERS=8 PORT=9000 python service.py
+cp .env.example .env
 ```
 
----
+Example configuration is stored in `.env.example`:
+
+```env
+LOCAL_POST_URL=https://example.com/api/endpoint
+SOLVER_TIMEOUT=45
+LOCAL_POST_TIMEOUT=30
+TURNSTILE_SITEKEY=your-turnstile-sitekey
+TURNSTILE_SITEURL=https://example.com/page-with-turnstile
+
+API_HOST=0.0.0.0
+API_PORT=8191
+API_KEY=replace-with-a-strong-api-key
+# API_KEYS=key-one,key-two
+
+ENABLE_XVFB_VIRTUAL_DISPLAY=true
+XVFB_DISPLAY=:99
+TS_PROFILE_DIR=/tmp/ts_profile_xvfb
+MAX_WORKERS=4
+
+# Optional
+# CHROME_PATH=/usr/bin/google-chrome
+# CHROME_ARGS=--disable-gpu
+```
+
+| Variable | Description |
+| --- | --- |
+| `LOCAL_POST_URL` | Upstream API endpoint that receives `nric` and `captchadata` |
+| `TURNSTILE_SITEKEY` | Cloudflare Turnstile sitekey |
+| `TURNSTILE_SITEURL` | Page URL where the Turnstile widget is loaded |
+| `API_HOST` | FastAPI bind host |
+| `API_PORT` | FastAPI bind port |
+| `API_KEY` | API key required in the `x-api-key` header |
+| `API_KEYS` | Optional comma-separated list of allowed API keys |
+| `SOLVER_TIMEOUT` | Max seconds to wait for Turnstile token |
+| `LOCAL_POST_TIMEOUT` | Max seconds to wait for upstream response |
+| `MAX_WORKERS` | Max concurrent Chrome solve jobs in one API process |
+| `ENABLE_XVFB_VIRTUAL_DISPLAY` | Force Chrome to run inside hidden Xvfb on Linux |
+| `XVFB_DISPLAY` | Xvfb display number, for example `:99` |
+| `TS_PROFILE_DIR` | Chrome profile directory used by the solver |
+| `CHROME_PATH` | Optional explicit Chrome executable path |
+| `CHROME_ARGS` | Optional extra Chrome launch arguments |
+
+## Run
+
+Development:
+
+```bash
+uv run ezsolver-api
+```
+
+Production-style single process:
+
+```bash
+uv run uvicorn service:app --host 0.0.0.0 --port 8191 --workers 1
+```
+
+Do not increase Uvicorn `--workers` unless each process has its own Xvfb display and Chrome profile directory. Use `MAX_WORKERS` to control concurrent Chrome jobs inside one process.
+
+## API
+
+### `POST /solve/`
+
+Query parameters:
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `nric` | yes | NRIC/MyKad number to check |
+| `timeout` | no | Override `SOLVER_TIMEOUT` |
+| `post_timeout` | no | Override `LOCAL_POST_TIMEOUT` |
+
+Headers:
+
+| Header | Required | Description |
+| --- | --- | --- |
+| `x-api-key` | yes | Must match `API_KEY` or one value in `API_KEYS` |
+
+Example:
+
+```bash
+curl -X POST "http://localhost:8191/solve/?nric=911024146045" \
+  -H "x-api-key: replace-with-a-strong-api-key"
+```
+
+Example response:
+
+```json
+{
+  "status": 200,
+  "body": {
+    "results": {
+      "success": true,
+      "quotas": [
+        {
+          "type": "FUEL",
+          "skucode": "RON95",
+          "expiredtime": "2026-06-30T16:00:59+00:00",
+          "quotaunits": [
+            {
+              "unit": "LITRE",
+              "quotaentitled": "200.000",
+              "quotaavailable": "155.158",
+              "quotalocked": "0.000",
+              "quotaused": "44.842"
+            },
+            {
+              "unit": "MYR",
+              "quotaentitled": "346.00",
+              "quotaavailable": "268.42",
+              "quotalocked": "0.00",
+              "quotaused": "77.58"
+            }
+          ]
+        }
+      ],
+      "reason": null
+    }
+  }
+}
+```
+
+Missing or invalid API key returns `401`.
+
+### `GET /health`
+
+```bash
+curl http://localhost:8191/health
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "workers": 4,
+  "active": 0,
+  "queued": 0
+}
+```
+
+### API docs
+
+```text
+http://localhost:8191/docs
+```
+
+## CLI usage
+
+You can still run the solver directly:
+
+```bash
+uv run python solver.py --nric 911024146045
+```
+
+This prints both the generated Turnstile token and the upstream result.
+
+## Xvfb behavior
+
+On Linux, if `ENABLE_XVFB_VIRTUAL_DISPLAY=true`, the solver forces Chrome to run inside the configured Xvfb display even if the current desktop has `DISPLAY` set. This keeps Chrome hidden when running from a GUI terminal or tmux session.
+
+If the configured display is already used, set another display and profile directory:
+
+```env
+XVFB_DISPLAY=:100
+TS_PROFILE_DIR=/tmp/ts_profile_xvfb_100
+```
+
+## Deployment notes
+
+Recommended command:
+
+```bash
+uv run uvicorn service:app --host 0.0.0.0 --port 8191 --workers 1
+```
+
+For background testing:
+
+```bash
+nohup uv run uvicorn service:app --host 0.0.0.0 --port 8191 --workers 1 > service.log 2>&1 &
+```
+
+Check logs:
+
+```bash
+tail -f service.log
+```
+
+Check process:
+
+```bash
+ps aux | grep uvicorn
+```
 
 ## Project structure
 
-```
+```text
 EzSolver/
-├── solver.py      # Core solver — browser automation logic
-├── service.py     # HTTP API wrapper around the solver
-└── clientsend.py  # CLI client + importable helper for service.py
+├── pyproject.toml  # uv project dependencies and console script
+├── service.py      # FastAPI API service
+├── solver.py       # Browser automation and upstream posting logic
+├── clientsend.py   # Legacy client/helper
+├── .env.example    # Safe example configuration
+└── .env            # Local runtime configuration, ignored by git
 ```
-
----
 
 ## Troubleshooting
 
-**Chrome not found**
-> Set `CHROME_PATH` to the full path of your Chrome executable.
+### Chrome still appears on desktop
 
-**Timeout / token not received**
-> The target site may be serving a harder challenge. Try increasing the timeout: `python clientsend.py <key> <url> 90`
+Stop old Chrome/solver processes and clear the old profile:
 
-**Linux: Xvfb not found**
-> `sudo apt install xvfb`
+```bash
+pkill -f "solver.py|uvicorn|/opt/google/chrome/chrome"
+rm -rf /tmp/ts_profile /tmp/ts_profile_xvfb
+```
 
----
+Then start the API again.
 
-<div align="center">
+### Xvfb display already active
 
-Made with ☕ by [Ismoiloff](https://github.com/ismoiloffS)
+Use another display:
 
-</div>
+```env
+XVFB_DISPLAY=:100
+TS_PROFILE_DIR=/tmp/ts_profile_xvfb_100
+```
+
+### Chrome not found
+
+Set `CHROME_PATH`:
+
+```env
+CHROME_PATH=/usr/bin/google-chrome
+```
+
+### API key errors
+
+Make sure `.env` has `API_KEY` and request header has matching `x-api-key`.
