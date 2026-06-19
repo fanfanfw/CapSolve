@@ -1,3 +1,4 @@
+import hmac
 import os
 import platform
 import subprocess
@@ -16,7 +17,11 @@ load_dotenv()
 
 PORT = int(os.environ.get("PORT", 8191))
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 4))
-API_KEY = os.environ.get("API_KEY", "").strip()
+API_KEYS = tuple(
+    key.strip()
+    for key in os.environ.get("API_KEYS", os.environ.get("API_KEY", "")).split(",")
+    if key.strip()
+)
 TURNSTILE_SITEKEY = os.environ.get("TURNSTILE_SITEKEY", "").strip()
 TURNSTILE_SITEURL = os.environ.get("TURNSTILE_SITEURL", "").strip()
 LOCAL_POST_URL = os.environ.get("LOCAL_POST_URL", "").strip()
@@ -71,10 +76,20 @@ app = FastAPI(title="EzSolver API", lifespan=lifespan)
 
 
 def verify_api_key(x_api_key: str = Header(default="")) -> None:
-    if API_KEY and x_api_key != API_KEY:
+    if not API_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="API key is not configured on server.",
+        )
+    if not x_api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid api key",
+            detail="Missing x-api-key header.",
+        )
+    if not any(hmac.compare_digest(x_api_key, configured_key) for configured_key in API_KEYS):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key.",
         )
 
 

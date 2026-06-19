@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Optional
 """
 MADE BY ISMOILOFF. GOOD LUCK HAVE FUN, THIS IS JUST PROJECT, USE IT ON UR OWN RISKS!
@@ -226,9 +227,12 @@ def solve(sitekey: str, siteurl: str, timeout: int = 45) -> str:
 
 
 def load_dotenv(path: str = ".env") -> None:
-    if not os.path.exists(path):
+    env_path = Path(path)
+    if not env_path.is_absolute():
+        env_path = Path(__file__).resolve().parent / env_path
+    if not env_path.exists():
         return
-    with open(path, "r", encoding="utf-8") as file:
+    with open(env_path, "r", encoding="utf-8") as file:
         for line in file:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
