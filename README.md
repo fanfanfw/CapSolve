@@ -94,7 +94,7 @@ Do not increase Uvicorn `--workers` unless each process has its own Xvfb display
 
 ## API
 
-### `POST /solve/`
+### `POST /api/solve/`
 
 Query parameters:
 
@@ -113,7 +113,7 @@ Headers:
 Example:
 
 ```bash
-curl -X POST "http://localhost:8191/solve/?nric=911024146045" \
+curl -X POST "http://localhost:8191/api/solve/?nric=911024146045" \
   -H "x-api-key: replace-with-a-strong-api-key"
 ```
 
@@ -156,10 +156,10 @@ Example response:
 
 Missing or invalid API key returns `401`.
 
-### `GET /health`
+### `GET /api/health`
 
 ```bash
-curl http://localhost:8191/health
+curl http://localhost:8191/api/health
 ```
 
 Response:

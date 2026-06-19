@@ -18,7 +18,7 @@ import json
 import urllib.request
 import urllib.error
 
-SERVICE_URL = "http://127.0.0.1:8191/solve"
+SERVICE_URL = "http://127.0.0.1:8191/api/solve/"
 
 
 def request_token(sitekey: str, siteurl: str, timeout: int = 45) -> str:

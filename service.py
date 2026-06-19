@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Query, Security, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Security, status
 from fastapi.security import APIKeyHeader
 
 from solver import load_dotenv, post_local_result, solve
@@ -80,6 +80,7 @@ app = FastAPI(
     description="REST API for BUDI95 quota lookup through Turnstile solving.",
     lifespan=lifespan,
 )
+api_router = APIRouter(prefix="/api")
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
@@ -113,7 +114,7 @@ def _solve_and_post(nric: str, timeout: int, post_timeout: int) -> dict:
     return post_local_result(LOCAL_POST_URL, nric, token, timeout=post_timeout)
 
 
-@app.get("/health")
+@api_router.get("/health")
 def health():
     with _count_lock:
         return {
@@ -124,7 +125,7 @@ def health():
         }
 
 
-@app.post("/solve/")
+@api_router.post("/solve/")
 def solve_endpoint(
     nric: str = Query(..., min_length=1),
     timeout: int = Query(SOLVER_TIMEOUT, ge=1),
@@ -158,6 +159,9 @@ def solve_endpoint(
         with _count_lock:
             _active_count -= 1
         _worker_sem.release()
+
+
+app.include_router(api_router)
 
 
 def run() -> None:
