@@ -79,11 +79,26 @@ def _start_xvfb_if_needed() -> Optional[subprocess.Popen]:
     return proc
 
 
+def _get_browser_args() -> list[str]:
+    args = [
+        "--ozone-platform=x11",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-session-crashed-bubble",
+        "--disable-infobars",
+    ]
+    extra = os.environ.get("CHROME_ARGS")
+    if extra:
+        args.extend(arg for arg in extra.split() if arg)
+    return args
+
+
 async def _solve(sitekey: str, siteurl: str, timeout: int) -> str:
     browser = await uc.start(
         browser_executable_path=_find_chrome(),
         headless=False,
         user_data_dir=_get_profile_dir(),
+        browser_args=_get_browser_args(),
     )
 
     try:
