@@ -8,7 +8,8 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Security, status
+from fastapi.security import APIKeyHeader
 
 from solver import load_dotenv, post_local_result, solve
 
@@ -79,9 +80,10 @@ app = FastAPI(
     description="REST API for BUDI95 quota lookup through Turnstile solving.",
     lifespan=lifespan,
 )
+api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
-def verify_api_key(x_api_key: str = Header(default="")) -> None:
+def verify_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
     if not API_KEYS:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
