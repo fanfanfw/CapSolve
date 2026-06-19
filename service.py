@@ -23,8 +23,10 @@ from socketserver import ThreadingMixIn
 from typing import Optional
 import json
 
-from solver import solve
+from solver import load_dotenv, solve
 
+
+load_dotenv()
 
 PORT = int(os.environ.get("PORT", 8191))
 # How many Chrome instances to run in parallel.
@@ -44,20 +46,28 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
+def _env_truthy(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _ensure_display() -> Optional[subprocess.Popen]:
-    """On Linux headless servers, start a virtual display so Chrome can run."""
+    """On Linux, start a hidden virtual display when needed or enabled."""
     if platform.system() != "Linux":
         return None
-    if os.environ.get("DISPLAY"):
+    if os.environ.get("DISPLAY") and not _env_truthy("ENABLE_XVFB_VIRTUAL_DISPLAY"):
         return None
+    display = os.environ.get("XVFB_DISPLAY", ":99")
     xvfb = subprocess.Popen(
-        ["Xvfb", ":99", "-screen", "0", "1280x900x24"],
+        ["Xvfb", display, "-screen", "0", "1280x900x24"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    os.environ["DISPLAY"] = ":99"
+    os.environ["DISPLAY"] = display
     time.sleep(0.5)
-    print("[service] started Xvfb on :99")
+    print(f"[service] started Xvfb on {display}")
     return xvfb
 
 
