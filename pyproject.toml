@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.24.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ezsolver"
+version = "0.1.0"
+description = "FastAPI service for BUDI95 Turnstile solving and quota lookup."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0",
+  "nodriver>=0.48.0",
+  "uvicorn[standard]>=0.30.0",
+]
+
+[project.scripts]
+ezsolver-api = "service:run"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["service.py", "solver.py", "clientsend.py"]

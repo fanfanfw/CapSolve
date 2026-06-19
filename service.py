@@ -15,7 +15,8 @@ from solver import load_dotenv, post_local_result, solve
 
 load_dotenv()
 
-PORT = int(os.environ.get("PORT", 8191))
+API_HOST = os.environ.get("API_HOST", "0.0.0.0")
+API_PORT = int(os.environ.get("API_PORT", os.environ.get("PORT", 8191)))
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 4))
 API_KEYS = tuple(
     key.strip()
@@ -63,7 +64,7 @@ def _ensure_display() -> Optional[subprocess.Popen]:
 async def lifespan(app: FastAPI):
     global _xvfb_proc
     _xvfb_proc = _ensure_display()
-    print(f"[service] FastAPI solver running on http://0.0.0.0:{PORT}")
+    print(f"[service] FastAPI solver running on http://{API_HOST}:{API_PORT}")
     print(f"[service] worker pool: {MAX_WORKERS} concurrent Chrome instances")
     try:
         yield
@@ -72,7 +73,12 @@ async def lifespan(app: FastAPI):
             _xvfb_proc.terminate()
 
 
-app = FastAPI(title="EzSolver API", lifespan=lifespan)
+app = FastAPI(
+    title="EzSolver API",
+    version="0.1.0",
+    description="REST API for BUDI95 quota lookup through Turnstile solving.",
+    lifespan=lifespan,
+)
 
 
 def verify_api_key(x_api_key: str = Header(default="")) -> None:
@@ -152,5 +158,9 @@ def solve_endpoint(
         _worker_sem.release()
 
 
+def run() -> None:
+    uvicorn.run("service:app", host=API_HOST, port=API_PORT)
+
+
 if __name__ == "__main__":
-    uvicorn.run("service:app", host="0.0.0.0", port=PORT)
+    run()
