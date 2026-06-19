@@ -5,6 +5,9 @@ import platform
 import random
 import subprocess
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Optional
 """
 MADE BY ISMOILOFF. GOOD LUCK HAVE FUN, THIS IS JUST PROJECT, USE IT ON UR OWN RISKS!
@@ -52,18 +55,26 @@ def _get_profile_dir() -> str:
     return "/tmp/ts_profile"
 
 
+def _env_truthy(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _start_xvfb_if_needed() -> Optional[subprocess.Popen]:
-    """On Linux headless servers, start a virtual display so Chrome can run."""
+    """On Linux, start a hidden virtual display when needed or enabled."""
     if platform.system() != "Linux":
         return None
-    if os.environ.get("DISPLAY"):
+    if os.environ.get("DISPLAY") and not _env_truthy("ENABLE_XVFB_VIRTUAL_DISPLAY"):
         return None
+    display = os.environ.get("XVFB_DISPLAY", ":99")
     proc = subprocess.Popen(
-        ["Xvfb", ":99", "-screen", "0", "1280x900x24"],
+        ["Xvfb", display, "-screen", "0", "1280x900x24"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    os.environ["DISPLAY"] = ":99"
+    os.environ["DISPLAY"] = display
     time.sleep(0.5)
     return proc
 
@@ -199,17 +210,88 @@ def solve(sitekey: str, siteurl: str, timeout: int = 45) -> str:
         return asyncio.run(_solve(sitekey, siteurl, timeout))
 
 
-if __name__ == "__main__":
-    import sys
+def load_dotenv(path: str = ".env") -> None:
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
 
-    if len(sys.argv) < 3:
-        print("Usage: python solver.py <sitekey> <siteurl>")
-        sys.exit(1)
+
+def post_local_result(endpoint: str, nric: str, captchadata: str, timeout: int = 30) -> dict:
+    parsed = urllib.parse.urlparse(endpoint)
+
+    body = json.dumps({
+        "nric": nric,
+        "captchadata": captchadata,
+    }).encode()
+    req = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode()
+            try:
+                data = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                data = {"raw": raw}
+            return {"status": resp.status, "body": data}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode()
+        try:
+            data = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            data = {"raw": raw}
+        return {"status": exc.code, "body": data}
+
+
+def main() -> int:
+    import argparse
+
+    load_dotenv()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("sitekey", nargs="?", default=os.environ.get("TURNSTILE_SITEKEY"))
+    parser.add_argument("siteurl", nargs="?", default=os.environ.get("TURNSTILE_SITEURL"))
+    parser.add_argument("--nric")
+    parser.add_argument("--post-url", default=os.environ.get("LOCAL_POST_URL"))
+    parser.add_argument("--timeout", type=int, default=int(os.environ.get("SOLVER_TIMEOUT", 45)))
+    parser.add_argument("--post-timeout", type=int, default=int(os.environ.get("LOCAL_POST_TIMEOUT", 30)))
+    args = parser.parse_args()
+
+    if not args.sitekey:
+        raise ValueError("sitekey argument or TURNSTILE_SITEKEY env is required")
+    if not args.siteurl:
+        raise ValueError("siteurl argument is required")
 
     xvfb = _start_xvfb_if_needed()
     try:
-        token = solve(sys.argv[1], sys.argv[2])
-        print(token)
+        token = solve(args.sitekey, args.siteurl, timeout=args.timeout)
+        if not args.post_url:
+            print(token)
+            return 0
+        if not args.nric:
+            raise ValueError("--nric is required when --post-url is used")
+        result = post_local_result(args.post_url, args.nric, token, timeout=args.post_timeout)
+        print(json.dumps({"captchadata": token, "result": result}, indent=2))
+        return 0
     finally:
         if xvfb:
             xvfb.terminate()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
