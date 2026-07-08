@@ -219,15 +219,13 @@ Cron example:
 * * * * * cd /path/to/CapSolve && uv run capsolve-worker --limit 50
 ```
 
-### `GET /api/budi95/result`
+### `GET /api/budi95/result/{ulid}`
 
 Checks an async job result by `ulid`:
 
 ```bash
-curl -X GET "http://localhost:8191/api/budi95/result" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: replace-with-a-strong-api-key" \
-  -d '{"ulid":"01JABCDEF1234567890XYZABCD"}'
+curl "http://localhost:8191/api/budi95/result/01JABCDEF1234567890XYZABCD" \
+  -H "x-api-key: replace-with-a-strong-api-key"
 ```
 
 Response when complete:

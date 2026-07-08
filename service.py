@@ -90,10 +90,6 @@ class Budi95SubmitRequest(BaseModel):
     nric: str
 
 
-class Budi95ResultRequest(BaseModel):
-    ulid: str
-
-
 def verify_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
     if not API_KEYS:
         raise HTTPException(
@@ -185,12 +181,12 @@ def submit_budi95_job(
     return job_repository.public_submit_response(job)
 
 
-@api_router.get("/budi95/result")
+@api_router.get("/budi95/result/{ulid}")
 def get_budi95_result(
-    request: Budi95ResultRequest,
+    ulid: str,
     _: None = Depends(verify_api_key),
 ):
-    job = job_repository.get_job_by_ulid(request.ulid)
+    job = job_repository.get_job_by_ulid(ulid)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return job_repository.public_result_response(job)

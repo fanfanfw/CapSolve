@@ -25,7 +25,7 @@ def main() -> int:
 
     paths = set(app.openapi()["paths"])
     assert "/api/budi95" in paths
-    assert "/api/budi95/result" in paths
+    assert "/api/budi95/result/{ulid}" in paths
     return 0
 
 
