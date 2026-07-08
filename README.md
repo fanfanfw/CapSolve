@@ -52,6 +52,14 @@ LOCAL_POST_TIMEOUT=30
 TURNSTILE_SITEKEY=your-turnstile-sitekey
 TURNSTILE_SITEURL=https://example.com/page-with-turnstile
 
+# Dynamic BUDI95 config
+BUDI95_AUTO_RESOLVE=true
+BUDI95_CONFIG_URL=https://www.budirakyat.gov.my/eligibility-check
+BUDI95_CONFIG_CACHE_SECONDS=1800
+BUDI95_CONFIG_FETCH_TIMEOUT=10
+BUDI95_FORCE_ENV_CONFIG=false
+BUDI95_CONFIG_CACHE_FILE=/tmp/capsolve_budi95_config.json
+
 API_HOST=0.0.0.0
 API_PORT=8191
 # PORT=8191
@@ -83,8 +91,14 @@ JOB_RESET_STALE_MINUTES=30
 | Variable | Description |
 | --- | --- |
 | `LOCAL_POST_URL` | Upstream API endpoint that receives `nric` and the solver-generated Turnstile token |
-| `TURNSTILE_SITEKEY` | Cloudflare Turnstile sitekey |
-| `TURNSTILE_SITEURL` | Page URL where the Turnstile widget is loaded |
+| `TURNSTILE_SITEKEY` | Cloudflare Turnstile sitekey; fallback/manual override for dynamic BUDI95 config |
+| `TURNSTILE_SITEURL` | Page URL where the Turnstile widget is loaded; fallback/manual override for dynamic BUDI95 config |
+| `BUDI95_AUTO_RESOLVE` | Resolve BUDI95 endpoint and sitekey from the official website at runtime |
+| `BUDI95_CONFIG_URL` | Official website page used for dynamic BUDI95 config discovery |
+| `BUDI95_CONFIG_CACHE_SECONDS` | Dynamic config cache TTL in seconds; default `1800` (30 minutes) |
+| `BUDI95_CONFIG_FETCH_TIMEOUT` | Seconds to wait when fetching the official config page |
+| `BUDI95_FORCE_ENV_CONFIG` | Skip dynamic resolution and use `.env` values only |
+| `BUDI95_CONFIG_CACHE_FILE` | Local JSON cache file path for resolved BUDI95 config |
 | `API_HOST` | FastAPI bind host |
 | `API_PORT` | FastAPI bind port |
 | `PORT` | Optional fallback bind port when `API_PORT` is not set |
@@ -106,6 +120,36 @@ JOB_RESET_STALE_MINUTES=30
 | `JOB_BATCH_LIMIT` | Default number of async jobs processed per worker run |
 | `JOB_MAX_ATTEMPTS` | Default max retries for async jobs, applied by the SQL schema |
 | `JOB_RESET_STALE_MINUTES` | Minutes before a stuck processing job is reset by the worker |
+
+## Dynamic BUDI95 Config
+
+CapSolve can resolve BUDI95 endpoint and Turnstile sitekey from the official website at runtime.
+
+Default behavior:
+- worker checks cached config first
+- if cache expired, it fetches official website config
+- if website fetch fails, it falls back to `.env`
+- if upstream DNS/connection fails, worker force-refreshes config and retries once
+
+The cache defaults to 30 minutes (`BUDI95_CONFIG_CACHE_SECONDS=1800`). `.env` is only a fallback/manual override source and is not auto-edited by the resolver.
+
+Env vars:
+- `BUDI95_AUTO_RESOLVE=true` enables runtime discovery.
+- `BUDI95_CONFIG_URL=https://www.budirakyat.gov.my/eligibility-check` is the official config page.
+- `BUDI95_CONFIG_CACHE_SECONDS=1800` controls cache lifetime.
+- `BUDI95_CONFIG_FETCH_TIMEOUT=10` controls website fetch timeout.
+- `BUDI95_FORCE_ENV_CONFIG=false` uses dynamic config unless set to force `.env` values.
+- `BUDI95_CONFIG_CACHE_FILE=/tmp/capsolve_budi95_config.json` stores the resolved config cache.
+- `LOCAL_POST_URL`, `TURNSTILE_SITEKEY`, and `TURNSTILE_SITEURL` remain the `.env` fallback/manual override values.
+
+Troubleshooting:
+
+```bash
+curl -H "x-api-key: ..." http://localhost:8191/api/budi95/config
+curl -H "x-api-key: ..." "http://localhost:8191/api/budi95/config?force_refresh=true"
+```
+
+Use `force_refresh=true` to bypass the cache and fetch the official website config again.
 
 ## Run
 

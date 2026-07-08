@@ -22,4 +22,4 @@ capsolve-self-check = "self_check:main"
 capsolve-worker = "process_jobs:main"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["service.py", "solver.py", "clientsend.py", "database.py", "job_repository.py", "migrate_sql.py", "process_jobs.py", "self_check.py", "sql"]
+only-include = ["service.py", "solver.py", "config_resolver.py", "clientsend.py", "database.py", "job_repository.py", "migrate_sql.py", "process_jobs.py", "self_check.py", "sql"]

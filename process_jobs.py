@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
+import urllib.error
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
 
+from config_resolver import resolve_budi95_config
 import database
 import job_repository
 from solver import load_dotenv, post_local_result, solve
@@ -43,18 +46,33 @@ def _preview_pending_jobs(limit: int) -> list[Job]:
             return [dict(row) for row in cursor.fetchall()]
 
 
-def _required_env(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise ValueError(f"{name} env is required")
-    return value
+def _worker_config(force_refresh: bool = False) -> dict[str, Any]:
+    budi95_config = resolve_budi95_config(force_refresh=force_refresh)
+    return {
+        "sitekey": budi95_config.turnstile_sitekey,
+        "siteurl": budi95_config.turnstile_siteurl,
+        "post_url": budi95_config.local_post_url,
+        "config_source": budi95_config.source,
+        "solver_timeout": _env_int("SOLVER_TIMEOUT", 45),
+        "post_timeout": _env_int("LOCAL_POST_TIMEOUT", 30),
+    }
+
+
+def _is_config_error(exc: Exception) -> bool:
+    if isinstance(exc, (urllib.error.URLError, socket.gaierror)):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, (socket.gaierror, TimeoutError)):
+        return True
+    text = str(exc).lower()
+    return "connection refused" in text or "timed out" in text
 
 
 def _will_retry(job: Job) -> bool:
     return int(job.get("attempts", 0)) < int(job.get("max_attempts", 0))
 
 
-def _mark_failed(job: Job, error: str, summary: dict[str, int]) -> None:
+def _mark_failed(job: Job, error: str, summary: dict[str, Any]) -> None:
     job_repository.mark_job_failed(job["ulid"], error)
     if _will_retry(job):
         summary["retried"] += 1
@@ -62,10 +80,19 @@ def _mark_failed(job: Job, error: str, summary: dict[str, int]) -> None:
         summary["failed"] += 1
 
 
-def _process_job(job: Job, config: dict[str, Any], summary: dict[str, int]) -> None:
+def _process_job(job: Job, config: dict[str, Any], summary: dict[str, Any]) -> None:
     try:
-        token = solve(config["sitekey"], config["siteurl"], timeout=config["solver_timeout"])
-        result = post_local_result(config["post_url"], job["nric"], token, timeout=config["post_timeout"])
+        for refreshed in (False, True):
+            try:
+                token = solve(config["sitekey"], config["siteurl"], timeout=config["solver_timeout"])
+                result = post_local_result(config["post_url"], job["nric"], token, timeout=config["post_timeout"])
+                break
+            except Exception as exc:
+                if refreshed or not _is_config_error(exc):
+                    raise
+                config.update(_worker_config(force_refresh=True))
+                summary["config_refreshed"] += 1
+                summary["config_source"] = config["config_source"]
         status = int(result.get("status", 0))
         if 200 <= status < 300:
             job_repository.mark_job_success(job["ulid"], status, result.get("body", {}))
@@ -108,6 +135,7 @@ def main() -> int:
         }))
         return 0
 
+    config = _worker_config()
     summary = {
         "claimed": 0,
         "success": 0,
@@ -116,18 +144,12 @@ def main() -> int:
         "exceptions": 0,
         "non_2xx": 0,
         "reset_stale": 0,
+        "config_source": config["config_source"],
+        "config_refreshed": 0,
     }
 
     if args.reset_stale_minutes > 0:
         summary["reset_stale"] = job_repository.reset_stale_processing_jobs(args.reset_stale_minutes)
-
-    config = {
-        "sitekey": _required_env("TURNSTILE_SITEKEY"),
-        "siteurl": _required_env("TURNSTILE_SITEURL"),
-        "post_url": _required_env("LOCAL_POST_URL"),
-        "solver_timeout": _env_int("SOLVER_TIMEOUT", 45),
-        "post_timeout": _env_int("LOCAL_POST_TIMEOUT", 30),
-    }
 
     jobs = job_repository.claim_pending_jobs(args.limit)
     summary["claimed"] = len(jobs)

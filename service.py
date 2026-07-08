@@ -1,9 +1,11 @@
 import hmac
 import os
 import platform
+import socket
 import subprocess
 import threading
 import time
+import urllib.error
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -12,6 +14,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Security,
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
+from config_resolver import resolve_budi95_config
 import job_repository
 from solver import load_dotenv, post_local_result, solve
 
@@ -108,16 +111,31 @@ def verify_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
         )
 
 
-def _solve_and_post(nric: str, timeout: int, post_timeout: int) -> dict:
-    if not TURNSTILE_SITEKEY:
-        raise ValueError("TURNSTILE_SITEKEY env is required")
-    if not TURNSTILE_SITEURL:
-        raise ValueError("TURNSTILE_SITEURL env is required")
-    if not LOCAL_POST_URL:
-        raise ValueError("LOCAL_POST_URL env is required")
+def _mask_sitekey(sitekey: str) -> str:
+    return f"{sitekey[:7]}...{sitekey[-4:]}" if len(sitekey) > 11 else "..."
 
-    token = solve(TURNSTILE_SITEKEY, TURNSTILE_SITEURL, timeout=timeout)
-    return post_local_result(LOCAL_POST_URL, nric, token, timeout=post_timeout)
+
+def _is_config_error(exc: Exception) -> bool:
+    if isinstance(exc, (urllib.error.URLError, socket.gaierror)):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, (socket.gaierror, TimeoutError)):
+        return True
+    text = str(exc).lower()
+    return "connection refused" in text or "timed out" in text
+
+
+def _solve_and_post(nric: str, timeout: int, post_timeout: int) -> dict:
+    config = resolve_budi95_config()
+    token = solve(config.turnstile_sitekey, config.turnstile_siteurl, timeout=timeout)
+    try:
+        return post_local_result(config.local_post_url, nric, token, timeout=post_timeout)
+    except Exception as exc:
+        if not _is_config_error(exc):
+            raise
+        config = resolve_budi95_config(force_refresh=True)
+        token = solve(config.turnstile_sitekey, config.turnstile_siteurl, timeout=timeout)
+        return post_local_result(config.local_post_url, nric, token, timeout=post_timeout)
 
 
 @api_router.get("/health")
@@ -168,6 +186,20 @@ def solve_endpoint(
         _worker_sem.release()
 
 
+@api_router.get("/budi95/config")
+def get_budi95_config(
+    force_refresh: bool = Query(False),
+    _: None = Depends(verify_api_key),
+):
+    config = resolve_budi95_config(force_refresh=force_refresh)
+    return {
+        "local_post_url": config.local_post_url,
+        "turnstile_siteurl": config.turnstile_siteurl,
+        "turnstile_sitekey": _mask_sitekey(config.turnstile_sitekey),
+        "source": config.source,
+    }
+
+
 @api_router.post("/budi95", status_code=status.HTTP_202_ACCEPTED)
 def submit_budi95_job(
     request: Budi95SubmitRequest,
@@ -181,15 +213,19 @@ def submit_budi95_job(
     return job_repository.public_submit_response(job)
 
 
+def _get_budi95_result(ulid: str) -> dict:
+    job = job_repository.get_job_by_ulid(ulid)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return job_repository.public_result_response(job)
+
+
 @api_router.get("/budi95/result/{ulid}")
 def get_budi95_result(
     ulid: str,
     _: None = Depends(verify_api_key),
 ):
-    job = job_repository.get_job_by_ulid(ulid)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return job_repository.public_result_response(job)
+    return _get_budi95_result(ulid)
 
 
 app.include_router(api_router)
