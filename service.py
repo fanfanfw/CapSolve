@@ -10,7 +10,9 @@ from typing import Optional
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Security, status
 from fastapi.security import APIKeyHeader
+from pydantic import BaseModel
 
+import job_repository
 from solver import load_dotenv, post_local_result, solve
 
 
@@ -84,6 +86,14 @@ api_router = APIRouter(prefix="/api")
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
+class Budi95SubmitRequest(BaseModel):
+    nric: str
+
+
+class Budi95ResultRequest(BaseModel):
+    ulid: str
+
+
 def verify_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
     if not API_KEYS:
         raise HTTPException(
@@ -133,11 +143,12 @@ def solve_endpoint(
     _: None = Depends(verify_api_key),
 ):
     global _active_count, _queued_count
+    log_nric = f"{nric[:1]}***{nric[-1:]}"
 
     with _count_lock:
         _queued_count += 1
 
-    print(f"[service] queued — nric={nric!r} (active={_active_count}/{MAX_WORKERS} queued={_queued_count})")
+    print(f"[service] queued — nric={log_nric!r} (active={_active_count}/{MAX_WORKERS} queued={_queued_count})")
     _worker_sem.acquire()
 
     with _count_lock:
@@ -146,19 +157,43 @@ def solve_endpoint(
 
     started = time.time()
     try:
-        print(f"[service] solving nric={nric!r} (active={_active_count}/{MAX_WORKERS})")
+        print(f"[service] solving nric={log_nric!r} (active={_active_count}/{MAX_WORKERS})")
         result = _solve_and_post(nric, timeout, post_timeout)
         elapsed = round(time.time() - started, 2)
         print(f"[service] solved in {elapsed}s")
         return result
     except Exception as exc:
         elapsed = round(time.time() - started, 2)
-        print(f"[service] error after {elapsed}s: {exc}")
+        print(f"[service] error after {elapsed}s: {str(exc).replace(nric, log_nric)}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
         with _count_lock:
             _active_count -= 1
         _worker_sem.release()
+
+
+@api_router.post("/budi95", status_code=status.HTTP_202_ACCEPTED)
+def submit_budi95_job(
+    request: Budi95SubmitRequest,
+    _: None = Depends(verify_api_key),
+):
+    nric = request.nric.strip()
+    if not nric:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="nric is required")
+
+    job = job_repository.create_job(nric)
+    return job_repository.public_submit_response(job)
+
+
+@api_router.get("/budi95/result")
+def get_budi95_result(
+    request: Budi95ResultRequest,
+    _: None = Depends(verify_api_key),
+):
+    job = job_repository.get_job_by_ulid(request.ulid)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return job_repository.public_result_response(job)
 
 
 app.include_router(api_router)

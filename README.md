@@ -26,6 +26,15 @@ uv sync
 
 Dependencies are managed through `pyproject.toml`.
 
+## Setup Postgres
+
+Create the local database and run the SQL migration:
+
+```bash
+createdb capsolve
+uv run capsolve-migrate-sql
+```
+
 ## Configuration
 
 Copy the example environment file and fill in your own values:
@@ -45,6 +54,7 @@ TURNSTILE_SITEURL=https://example.com/page-with-turnstile
 
 API_HOST=0.0.0.0
 API_PORT=8191
+# PORT=8191
 API_KEY=replace-with-a-strong-api-key
 # API_KEYS=key-one,key-two
 
@@ -53,6 +63,18 @@ XVFB_DISPLAY=:99
 TS_PROFILE_DIR=/tmp/ts_profile_xvfb
 MAX_WORKERS=4
 
+# Postgres
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=capsolve
+DB_USER=postgres
+DB_PASSWORD=
+
+# Async job worker
+JOB_BATCH_LIMIT=50
+JOB_MAX_ATTEMPTS=3
+JOB_RESET_STALE_MINUTES=30
+
 # Optional
 # CHROME_PATH=/usr/bin/google-chrome
 # CHROME_ARGS=--disable-gpu
@@ -60,11 +82,12 @@ MAX_WORKERS=4
 
 | Variable | Description |
 | --- | --- |
-| `LOCAL_POST_URL` | Upstream API endpoint that receives `nric` and `captchadata` |
+| `LOCAL_POST_URL` | Upstream API endpoint that receives `nric` and the solver-generated Turnstile token |
 | `TURNSTILE_SITEKEY` | Cloudflare Turnstile sitekey |
 | `TURNSTILE_SITEURL` | Page URL where the Turnstile widget is loaded |
 | `API_HOST` | FastAPI bind host |
 | `API_PORT` | FastAPI bind port |
+| `PORT` | Optional fallback bind port when `API_PORT` is not set |
 | `API_KEY` | API key required in the `x-api-key` header |
 | `API_KEYS` | Optional comma-separated list of allowed API keys |
 | `SOLVER_TIMEOUT` | Max seconds to wait for Turnstile token |
@@ -75,6 +98,14 @@ MAX_WORKERS=4
 | `TS_PROFILE_DIR` | Chrome profile directory used by the solver |
 | `CHROME_PATH` | Optional explicit Chrome executable path |
 | `CHROME_ARGS` | Optional extra Chrome launch arguments |
+| `DB_HOST` | Postgres host |
+| `DB_PORT` | Postgres port |
+| `DB_NAME` | Postgres database name |
+| `DB_USER` | Postgres user |
+| `DB_PASSWORD` | Postgres password |
+| `JOB_BATCH_LIMIT` | Default number of async jobs processed per worker run |
+| `JOB_MAX_ATTEMPTS` | Default max retries for async jobs, applied by the SQL schema |
+| `JOB_RESET_STALE_MINUTES` | Minutes before a stuck processing job is reset by the worker |
 
 ## Run
 
@@ -155,6 +186,58 @@ Example response:
 ```
 
 Missing or invalid API key returns `401`.
+
+### `POST /api/budi95`
+
+Submits an async BUDI95 job. The client sends only `nric` and does not send `captchadata`; the worker later generates the Turnstile token itself using the existing solver and posts the token to the upstream service.
+
+```bash
+curl -X POST "http://localhost:8191/api/budi95" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: replace-with-a-strong-api-key" \
+  -d '{"nric":"950724115057"}'
+```
+
+Response:
+
+```json
+{
+  "nric": "950724115057",
+  "ulid": "01JABCDEF1234567890XYZABCD"
+}
+```
+
+Run the worker to process pending async jobs:
+
+```bash
+uv run capsolve-worker --limit 50
+```
+
+Cron example:
+
+```cron
+* * * * * cd /path/to/CapSolve && uv run capsolve-worker --limit 50
+```
+
+### `GET /api/budi95/result`
+
+Checks an async job result by `ulid`:
+
+```bash
+curl -X GET "http://localhost:8191/api/budi95/result" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: replace-with-a-strong-api-key" \
+  -d '{"ulid":"01JABCDEF1234567890XYZABCD"}'
+```
+
+Response when complete:
+
+```json
+{
+  "status": true,
+  "data": {}
+}
+```
 
 ### `GET /api/health`
 

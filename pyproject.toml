@@ -11,11 +11,15 @@ requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115.0",
   "nodriver>=0.48.0",
+  "psycopg2-binary>=2.9.10",
   "uvicorn[standard]>=0.30.0",
 ]
 
 [project.scripts]
 capsolve-api = "service:run"
+capsolve-migrate-sql = "migrate_sql:main"
+capsolve-self-check = "self_check:main"
+capsolve-worker = "process_jobs:main"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["service.py", "solver.py", "clientsend.py"]
+only-include = ["service.py", "solver.py", "clientsend.py", "database.py", "job_repository.py", "migrate_sql.py", "process_jobs.py", "self_check.py", "sql"]
