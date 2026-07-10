@@ -209,7 +209,10 @@ def submit_budi95_job(
     if not nric:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="nric is required")
 
-    job = job_repository.create_job(nric)
+    try:
+        job = job_repository.create_job(nric)
+    except Exception:
+        return {"status": False, "id_no": nric, "ulid": None, "message": "Unable to create"}
     return job_repository.public_submit_response(job)
 
 

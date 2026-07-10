@@ -17,16 +17,21 @@ def main() -> int:
     assert first != second
 
     submit = job_repository.public_submit_response({"nric": "S1234567A", "ulid": first})
-    assert set(submit) == {"nric", "ulid"}
-    assert submit == {"nric": "S1234567A", "ulid": first}
+    assert set(submit) == {"status", "id_no", "ulid", "message"}
+    assert submit == {"status": True, "id_no": "S1234567A", "ulid": first, "message": "OK"}
+
+    pending = job_repository.public_result_response({"status": "pending"})
+    assert pending == {"status": True, "job_status": "pending", "message": "OK", "data": None}
 
     failed = job_repository.public_result_response({"status": "failed", "error": "boom"})
-    assert set(failed) == {"status", "data"}
+    assert set(failed) == {"status", "job_status", "message", "data"}
     assert failed["status"] is False
+    assert failed["job_status"] == "failed"
+    assert failed["message"] == "Unable to process subsidy"
     assert failed["data"]["error"] == "boom"
 
     success = job_repository.public_result_response({"status": "success", "response_body": {"ok": True}})
-    assert set(success) == {"status", "data"}
+    assert success == {"status": True, "job_status": "completed", "message": "OK", "data": {"ok": True}}
 
     js_fixture = 'var e="https://be.budirakyat.gov.my/api/",t="https://www.budirakyat.gov.my/",s="v1",a={CLOUDFLARE_TURNSTILE_SITEID:"0x4AAAAAABldcyHGJWZTEqRB",apiEndpoints:{portalsvc:{pubGetCountInfo:`${e}portalsvc/${s}/pub_getcountinfo`}}}'
     config = config_resolver.parse_config_from_js(js_fixture, "https://www.budirakyat.gov.my/eligibility-check")

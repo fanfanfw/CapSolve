@@ -246,8 +246,10 @@ Response:
 
 ```json
 {
-  "nric": "950724115057",
-  "ulid": "01JABCDEF1234567890XYZABCD"
+  "status": true,
+  "id_no": "950724115057",
+  "ulid": "01JABCDEF1234567890XYZABCD",
+  "message": "OK"
 }
 ```
 
@@ -272,12 +274,38 @@ curl "http://localhost:8191/api/budi95/result/01JABCDEF1234567890XYZABCD" \
   -H "x-api-key: replace-with-a-strong-api-key"
 ```
 
+Response while pending or processing:
+
+```json
+{
+  "status": true,
+  "job_status": "pending",
+  "message": "OK",
+  "data": null
+}
+```
+
 Response when complete:
 
 ```json
 {
   "status": true,
+  "job_status": "completed",
+  "message": "OK",
   "data": {}
+}
+```
+
+Response when failed:
+
+```json
+{
+  "status": false,
+  "job_status": "failed",
+  "message": "Unable to process subsidy",
+  "data": {
+    "error": "..."
+  }
 }
 ```
 

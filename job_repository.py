@@ -140,14 +140,17 @@ def reset_stale_processing_jobs(older_than_minutes: int) -> int:
 
 
 def public_submit_response(job: Job) -> dict:
-    return {"nric": job["nric"], "ulid": job["ulid"]}
+    return {"status": True, "id_no": job["nric"], "ulid": job["ulid"], "message": "OK"}
 
 
 def public_result_response(job: Job | None) -> dict:
-    if not job or job.get("status") in {"pending", "processing"}:
-        return {"status": False, "data": None}
-    if job.get("status") == "success":
-        return {"status": True, "data": job.get("response_body")}
-    if job.get("status") == "failed":
-        return {"status": False, "data": {"error": job.get("error")}}
-    return {"status": False, "data": None}
+    if not job:
+        return {"status": False, "job_status": None, "message": "Unable to process subsidy", "data": None}
+    job_status = job.get("status")
+    if job_status in {"pending", "processing"}:
+        return {"status": True, "job_status": job_status, "message": "OK", "data": None}
+    if job_status == "success":
+        return {"status": True, "job_status": "completed", "message": "OK", "data": job.get("response_body")}
+    if job_status == "failed":
+        return {"status": False, "job_status": "failed", "message": "Unable to process subsidy", "data": {"error": job.get("error")}}
+    return {"status": False, "job_status": job_status, "message": "Unable to process subsidy", "data": None}
