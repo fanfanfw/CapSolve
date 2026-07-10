@@ -186,7 +186,7 @@ def solve_endpoint(
         _worker_sem.release()
 
 
-@api_router.get("/budi95/config")
+@api_router.get("/budi95/config", include_in_schema=False)
 def get_budi95_config(
     force_refresh: bool = Query(False),
     _: None = Depends(verify_api_key),
