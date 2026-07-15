@@ -201,6 +201,7 @@ def get_budi95_config(
 
 
 @api_router.post("/budi95", status_code=status.HTTP_200_OK)
+@api_router.post("/budi95/", status_code=status.HTTP_200_OK, include_in_schema=False)
 def submit_budi95_job(
     request: Budi95SubmitRequest,
     _: None = Depends(verify_api_key),
