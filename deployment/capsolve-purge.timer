@@ -1,0 +1,11 @@
+[Unit]
+Description=Run CapSolve terminal-job purge every 30 minutes
+
+[Timer]
+OnCalendar=*:0/30:00
+Persistent=true
+RandomizedDelaySec=0
+Unit=capsolve-purge.service
+
+[Install]
+WantedBy=timers.target

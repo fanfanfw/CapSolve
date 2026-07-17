@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "REPLACE_WITH_UTC_TIMESTAMP",
+  "purge_timer": {
+    "service_unit": "capsolve-purge.service",
+    "timer_unit": "capsolve-purge.timer",
+    "interval_seconds": 1800
+  },
+  "backup": {
+    "backup_retention_hours": 24,
+    "rpo_hours": 24,
+    "rto_minutes": 60,
+    "last_success_at_utc": "REPLACE_WITH_UTC_TIMESTAMP",
+    "artifact_id": "REPLACE_WITH_NONSECRET_BACKUP_ID",
+    "artifact_basename": "capsolve.dump",
+    "artifact_sha256": "REPLACE_WITH_64_LOWERCASE_HEX",
+    "checksum_verified_at_utc": "REPLACE_WITH_UTC_TIMESTAMP",
+    "restore_started_at_utc": "REPLACE_WITH_UTC_TIMESTAMP",
+    "restore_verified_at_utc": "REPLACE_WITH_UTC_TIMESTAMP",
+    "restore_duration_seconds": 0,
+    "source_row_count": 0,
+    "restored_row_count": 0
+  }
+}

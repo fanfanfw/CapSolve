@@ -1,0 +1,35 @@
+[Unit]
+Description=CapSolve API
+Requires=capsolve-xvfb.service
+After=network-online.target postgresql.service capsolve-xvfb.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=capsolve-api
+Group=capsolve-nginx
+WorkingDirectory=/opt/capsolve
+EnvironmentFile=/etc/capsolve/api.env
+RuntimeDirectory=capsolve/uvicorn
+RuntimeDirectoryMode=0770
+ExecStart=/opt/capsolve/.venv/bin/capsolve-api
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+KillMode=control-group
+TimeoutStopSec=30s
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/run/capsolve/uvicorn /var/lib/capsolve-api
+MemoryHigh=2G
+MemoryMax=3G
+TasksMax=512
+CPUQuota=200%
+LogNamespace=capsolve
+SyslogIdentifier=capsolve-api
+
+[Install]
+WantedBy=multi-user.target

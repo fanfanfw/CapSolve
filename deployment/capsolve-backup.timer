@@ -1,0 +1,11 @@
+[Unit]
+Description=Run protected CapSolve PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 00:00:00 UTC
+Persistent=true
+RandomizedDelaySec=0
+Unit=capsolve-backup.service
+
+[Install]
+WantedBy=timers.target

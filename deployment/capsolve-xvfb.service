@@ -1,0 +1,29 @@
+[Unit]
+Description=CapSolve external Xvfb display
+After=local-fs.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=capsolve-xvfb
+Group=capsolve-xvfb
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x900x24 -nolisten tcp -noreset
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+KillMode=control-group
+TimeoutStopSec=15s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=false
+MemoryHigh=512M
+MemoryMax=768M
+TasksMax=64
+CPUQuota=100%
+LogNamespace=capsolve
+SyslogIdentifier=capsolve-xvfb
+
+[Install]
+WantedBy=multi-user.target

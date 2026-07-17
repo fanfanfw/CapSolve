@@ -1,0 +1,11 @@
+# Phase 5 design artifact only. Replace every angle-bracket placeholder; preflight
+# must reject placeholders before Phase 8 deployment.
+tunnel: <REQUIRED_TUNNEL_UUID>
+credentials-file: /etc/cloudflared/<REQUIRED_TUNNEL_UUID>.json
+
+ingress:
+  - hostname: <REQUIRED_CAPSOLVE_HOSTNAME>
+    service: unix:/run/capsolve/ingress/cloudflared.sock
+    originRequest:
+      httpHostHeader: <REQUIRED_CAPSOLVE_HOSTNAME>
+  - service: http_status:404

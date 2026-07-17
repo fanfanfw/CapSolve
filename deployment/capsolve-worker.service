@@ -1,0 +1,27 @@
+[Unit]
+Description=Process one serial CapSolve worker batch
+Requires=capsolve-xvfb.service
+After=network-online.target postgresql.service capsolve-xvfb.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=capsolve-worker
+Group=capsolve-worker
+WorkingDirectory=/opt/capsolve
+EnvironmentFile=/etc/capsolve/worker.env
+ExecStart=/opt/capsolve/.venv/bin/capsolve-worker
+UMask=0077
+KillMode=control-group
+TimeoutStartSec=15min
+TimeoutStopSec=30s
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/capsolve-worker
+MemoryHigh=2G
+MemoryMax=3G
+TasksMax=512
+CPUQuota=200%
+LogNamespace=capsolve
+SyslogIdentifier=capsolve-worker

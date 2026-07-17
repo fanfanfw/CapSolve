@@ -1,0 +1,22 @@
+[Unit]
+Description=Create protected CapSolve PostgreSQL backup
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=capsolve-backup
+Group=capsolve-backup
+WorkingDirectory=/opt/capsolve
+EnvironmentFile=/etc/capsolve/backup.env
+ExecStart=/opt/capsolve/.venv/bin/python /opt/capsolve/deployment/baseline.py scheduled-backup --backup-dir ${CAPSOLVE_BACKUP_DIR} --evidence-file ${CAPSOLVE_BACKUP_EVIDENCE} --source-pgservice ${CAPSOLVE_BACKUP_PGSERVICE} --retention-hours ${CAPSOLVE_BACKUP_RETENTION_HOURS}
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+MemoryMax=1G
+TasksMax=64
+CPUQuota=100%
+LogNamespace=capsolve
+SyslogIdentifier=capsolve-backup

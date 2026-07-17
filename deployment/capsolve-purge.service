@@ -1,0 +1,21 @@
+[Unit]
+Description=Purge expired CapSolve terminal jobs
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+User=capsolve-purge
+Group=capsolve-purge
+WorkingDirectory=/opt/capsolve
+EnvironmentFile=/etc/capsolve/purge.env
+ExecStart=/opt/capsolve/.venv/bin/capsolve-purge-jobs
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+MemoryMax=256M
+TasksMax=32
+CPUQuota=50%
+LogNamespace=capsolve
+SyslogIdentifier=capsolve-purge

@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch CapSolve nginx ingress Unix socket
+
+[Path]
+PathChanged=/run/capsolve/ingress/cloudflared.sock
+Unit=capsolve-ingress-permissions.service
+
+[Install]
+WantedBy=multi-user.target

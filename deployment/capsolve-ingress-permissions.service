@@ -1,0 +1,17 @@
+[Unit]
+Description=Secure CapSolve nginx ingress Unix socket
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/capsolve/.venv/bin/python /opt/capsolve/deployment/secure_nginx_ingress.py /run/capsolve/ingress /run/capsolve/ingress/cloudflared.sock 0 cloudflared
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/capsolve/ingress
+MemoryMax=64M
+TasksMax=16
+CPUQuota=25%

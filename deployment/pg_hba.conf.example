@@ -1,0 +1,10 @@
+# REVIEW TEMPLATE: replace role/database names only after inventory; never add public CIDRs.
+local   capsolve   capsolve_api      scram-sha-256
+local   capsolve   capsolve_worker   scram-sha-256
+local   capsolve   capsolve_purge    scram-sha-256
+host    capsolve   capsolve_api      127.0.0.1/32   scram-sha-256
+host    capsolve   capsolve_worker   127.0.0.1/32   scram-sha-256
+host    capsolve   capsolve_purge    127.0.0.1/32   scram-sha-256
+host    capsolve   capsolve_api      ::1/128        scram-sha-256
+host    capsolve   capsolve_worker   ::1/128        scram-sha-256
+host    capsolve   capsolve_purge    ::1/128        scram-sha-256
