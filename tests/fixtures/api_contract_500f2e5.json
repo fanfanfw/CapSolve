@@ -1,0 +1,235 @@
+{
+  "baseline_commit": "500f2e5",
+  "environment": {
+    "API_KEY": "phase2-baseline-key",
+    "MAX_WORKERS": "1"
+  },
+  "external_boundaries": "solver, database repository calls, and dynamic config resolver outputs mocked; FastAPI routing and serialization executed through ASGI",
+  "fixtures": {
+    "config_force": {
+      "body": {
+        "local_post_url": "https://api.example.invalid/result",
+        "source": "website",
+        "turnstile_sitekey": "0xabcde...7890",
+        "turnstile_siteurl": "https://site.example.invalid"
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "config_normal": {
+      "body": {
+        "local_post_url": "https://api.example.invalid/result",
+        "source": "cache",
+        "turnstile_sitekey": "0x12345...cdef",
+        "turnstile_siteurl": "https://site.example.invalid"
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "health": {
+      "body": {
+        "active": 0,
+        "queued": 0,
+        "status": "ok",
+        "workers": 1
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "result_failed": {
+      "body": {
+        "data": {
+          "error": "S1234567A SQL db.internal dbuser dbpassword"
+        },
+        "job_status": "failed",
+        "message": "Unable to process subsidy",
+        "status": false
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "result_not_found": {
+      "body": {
+        "detail": "Job not found"
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 404
+    },
+    "result_pending": {
+      "body": {
+        "data": null,
+        "job_status": "pending",
+        "message": "OK",
+        "status": true
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "result_processing": {
+      "body": {
+        "data": null,
+        "job_status": "processing",
+        "message": "OK",
+        "status": true
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "result_success": {
+      "body": {
+        "data": {
+          "results": {
+            "success": true
+          }
+        },
+        "job_status": "completed",
+        "message": "OK",
+        "status": true
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "solve_invalid_key": {
+      "body": {
+        "detail": "Invalid API key."
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 401
+    },
+    "solve_malformed_timeout": {
+      "body": {
+        "detail": [
+          {
+            "input": "S1234567A SQL db.internal dbuser dbpassword",
+            "loc": [
+              "query",
+              "timeout"
+            ],
+            "msg": "Input should be a valid integer, unable to parse string as an integer",
+            "type": "int_parsing"
+          }
+        ]
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 422
+    },
+    "solve_missing_key": {
+      "body": {
+        "detail": "Missing x-api-key header."
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 401
+    },
+    "solve_missing_nric": {
+      "body": {
+        "detail": [
+          {
+            "input": null,
+            "loc": [
+              "query",
+              "nric"
+            ],
+            "msg": "Field required",
+            "type": "missing"
+          }
+        ]
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 422
+    },
+    "solve_raw_failure": {
+      "body": {
+        "detail": "S1234567A SQL db.internal dbuser dbpassword"
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 500
+    },
+    "solve_success": {
+      "body": {
+        "body": {
+          "results": {
+            "reason": null,
+            "success": true
+          }
+        },
+        "status": 200
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "submit": {
+      "body": {
+        "id_no": "S1234567A",
+        "message": "OK",
+        "status": true,
+        "ulid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "submit_malformed_type": {
+      "body": {
+        "detail": [
+          {
+            "input": {
+              "value": "S1234567A SQL db.internal dbuser dbpassword"
+            },
+            "loc": [
+              "body",
+              "nric"
+            ],
+            "msg": "Input should be a valid string",
+            "type": "string_type"
+          }
+        ]
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 422
+    },
+    "submit_slash": {
+      "body": {
+        "id_no": "S1234567A",
+        "message": "OK",
+        "status": true,
+        "ulid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "status": 200
+    }
+  },
+  "procedure": "git worktree add --detach <temporary-path> 500f2e5; .venv/bin/python tools/capture_api_contract.py <temporary-path> tests/fixtures/api_contract_500f2e5.json; git worktree remove <temporary-path>"
+}

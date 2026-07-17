@@ -23,12 +23,14 @@ def main() -> int:
     pending = job_repository.public_result_response({"status": "pending"})
     assert pending == {"status": True, "job_status": "pending", "message": "OK", "data": None}
 
-    failed = job_repository.public_result_response({"status": "failed", "error": "boom"})
-    assert set(failed) == {"status", "job_status", "message", "data"}
-    assert failed["status"] is False
-    assert failed["job_status"] == "failed"
-    assert failed["message"] == "Unable to process subsidy"
-    assert failed["data"]["error"] == "boom"
+    failed = job_repository.public_result_response({"status": "failed", "error": "sensitive legacy detail"})
+    assert failed == {
+        "status": False,
+        "job_status": "failed",
+        "message": "Unable to process subsidy",
+        "data": {"error_code": "job_failed", "message": "Unable to process subsidy"},
+    }
+    assert "sensitive legacy detail" not in str(failed)
 
     success = job_repository.public_result_response({"status": "success", "response_body": {"ok": True}})
     assert success == {"status": True, "job_status": "completed", "message": "OK", "data": {"ok": True}}

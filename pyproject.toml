@@ -18,8 +18,13 @@ dependencies = [
 [project.scripts]
 capsolve-api = "service:run"
 capsolve-migrate-sql = "migrate_sql:main"
+capsolve-production-preflight = "production_preflight:main"
+capsolve-purge-jobs = "purge_jobs:main"
 capsolve-self-check = "self_check:main"
 capsolve-worker = "process_jobs:main"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["service.py", "solver.py", "config_resolver.py", "clientsend.py", "database.py", "job_repository.py", "migrate_sql.py", "process_jobs.py", "self_check.py", "sql"]
+only-include = ["service.py", "solver.py", "settings.py", "chrome_slots.py", "config_resolver.py", "clientsend.py", "database.py", "job_repository.py", "migrate_sql.py", "process_jobs.py", "purge_jobs.py", "production_preflight.py", "worker_freshness.py", "self_check.py", "sql", "deployment"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["service.py", "solver.py", "settings.py", "chrome_slots.py", "config_resolver.py", "clientsend.py", "database.py", "job_repository.py", "migrate_sql.py", "process_jobs.py", "purge_jobs.py", "production_preflight.py", "worker_freshness.py", "self_check.py", "sql", "deployment", "pyproject.toml", "README.md", "uv.lock"]
