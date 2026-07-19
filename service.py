@@ -571,6 +571,35 @@ def get_budi95_result(
     return _get_budi95_result(ulid)
 
 
+@api_router.get("/budi95/queue/status")
+def get_budi95_queue_status(
+    _: None = Depends(verify_client_ip),
+    __: None = Depends(verify_api_key),
+):
+    if _settings is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job queue is unavailable")
+    try:
+        metrics = job_repository.queue_metrics(_settings.job_reset_stale_minutes)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job queue is unavailable") from None
+    depth = int(metrics["queue_depth"])
+    capacity = _settings.job_queue_capacity
+    return {
+        "capacity": capacity,
+        "depth": depth,
+        "pending": int(metrics["pending_count"]),
+        "processing": int(metrics["processing_count"]),
+        "available": max(capacity - depth, 0),
+        "oldest_pending_age_seconds": metrics["oldest_pending_age_seconds"],
+        "stale_processing": int(metrics["stale_processing_count"]),
+        "worker": {
+            "model": "scheduled",
+            "processing": int(metrics["processing_count"]),
+            "max_concurrent_solves": _settings.global_chrome_slots,
+        },
+    }
+
+
 def create_app(
     *,
     docs_enabled: bool | None = None,

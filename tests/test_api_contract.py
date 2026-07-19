@@ -84,6 +84,7 @@ class Phase2GoldenHttpTest(unittest.TestCase):
             job_queue_capacity=3,
             job_queue_retry_after_seconds=17,
             job_max_attempts=4,
+            job_reset_stale_minutes=30,
             solver_timeout=45,
             local_post_timeout=30,
             sync_queue_max_waiting=0,
@@ -173,6 +174,46 @@ class Phase2GoldenHttpTest(unittest.TestCase):
                     "submit_slash" if path.endswith("/") else "submit",
                 )
                 create.assert_called_once_with("S1234567A", 4, 3)
+
+    def test_queue_status_reports_capacity_usage_and_worker_model(self) -> None:
+        self.settings.job_queue_capacity = 3
+        self.settings.global_chrome_slots = 1
+        metrics = {
+            "queue_depth": 4,
+            "pending_count": 3,
+            "processing_count": 1,
+            "oldest_pending_age_seconds": 12.5,
+            "stale_processing_count": 1,
+        }
+        with mock.patch.object(job_repository, "queue_metrics", return_value=metrics) as queue_metrics:
+            self.assert_json(
+                request("GET", "/api/budi95/queue/status"),
+                200,
+                {
+                    "capacity": 3,
+                    "depth": 4,
+                    "pending": 3,
+                    "processing": 1,
+                    "available": 0,
+                    "oldest_pending_age_seconds": 12.5,
+                    "stale_processing": 1,
+                    "worker": {"model": "scheduled", "processing": 1, "max_concurrent_solves": 1},
+                },
+            )
+        queue_metrics.assert_called_once_with(30)
+
+    def test_queue_status_requires_key_and_sanitizes_repository_failure(self) -> None:
+        self.assert_json(
+            request("GET", "/api/budi95/queue/status", api_key=None),
+            401,
+            {"detail": "Missing x-api-key header."},
+        )
+        output = io.StringIO()
+        with mock.patch.object(job_repository, "queue_metrics", side_effect=RuntimeError(CANARY)), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            response = request("GET", "/api/budi95/queue/status")
+        self.assert_json(response, 503, {"detail": "Job queue is unavailable"})
+        self.assert_no_leak(response)
+        self.assertNotIn(CANARY.lower(), output.getvalue().lower())
 
     def test_malformed_type_canaries_are_generic_and_absent_from_logs(self) -> None:
         output = io.StringIO()
