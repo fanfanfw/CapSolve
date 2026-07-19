@@ -64,6 +64,7 @@ The API validates inbound keys, allowlist, hosts, and all consumed integer/boole
 | `API_HOST`, `UVICORN_UDS`, `UVICORN_SOCKET_MODE`, `UVICORN_SOCKET_PARENT_GID`, `UVICORN_SOCKET_GID` | Development loopback TCP; production pre-bound Unix socket `0660`, parent creator GID (defaults to process primary GID) and required explicit nginx target GID |
 | `SOLVER_TIMEOUT`, `LOCAL_POST_TIMEOUT` | Positive solve and upstream timeouts |
 | `JOB_QUEUE_CAPACITY`, `JOB_QUEUE_RETRY_AFTER_SECONDS` | Positive outstanding-job limit and retry delay for rejected async submits |
+| `BUDI95_SUBMIT_RATE_LIMIT_PER_MINUTE`, `BUDI95_READ_RATE_LIMIT_PER_MINUTE` | Per-resolved-client-IP fixed-window limits for submit/solve and BUDI95 read/poll routes; defaults `30`/`120`, `0` disables |
 | `JOB_BATCH_LIMIT`, `JOB_MAX_ATTEMPTS` | Positive worker batch and new-job attempt limits |
 | `JOB_RESET_STALE_MINUTES`, `SYNC_QUEUE_MAX_WAITING` | Nonnegative worker stale and bounded synchronous waiting settings |
 | `JOB_RETENTION_HOURS`, `PURGE_BATCH_LIMIT` | Terminal-job retention: development default/approved value `24`, production explicitly required, range `1..8760`; deterministic purge batch default `1000`, range `1..10000` |
@@ -76,6 +77,8 @@ The API validates inbound keys, allowlist, hosts, and all consumed integer/boole
 `.env` is not hot reload. API settings apply after an API restart; this includes API key and IP allowlist changes. Worker and purge settings apply on their next invocation. A changed `JOB_MAX_ATTEMPTS` applies only to jobs submitted afterward. Lowering `JOB_QUEUE_CAPACITY` never deletes existing jobs; new submissions remain blocked until outstanding jobs fall below the limit.
 
 Async admission is serialized by a dedicated PostgreSQL transaction advisory lock. Capacity counts only `pending` plus `processing`; `success` and `failed` rows do not occupy slots. A full queue returns HTTP `429` with `Retry-After` and `{"detail":"Job queue is full"}`. An unavailable database/admission path returns HTTP `503` with the same header and `{"detail":"Job queue is unavailable"}`.
+
+Application rate limits are fixed one-minute windows per resolved client IP after Host, IP allowlist, and API-key validation. `BUDI95_SUBMIT_RATE_LIMIT_PER_MINUTE` applies to `POST /api/budi95`, its trailing-slash alias, and legacy `POST /api/solve/`. `BUDI95_READ_RATE_LIMIT_PER_MINUTE` applies to config, result polling, and queue status. Exceeding either returns HTTP `429`, `Retry-After`, and `{"detail":"Rate limit exceeded"}`. Limits are per API process and reset on restart; use Cloudflare/nginx limits as an additional distributed edge layer when scaling beyond one process.
 
 ## Dynamic BUDI95 Config
 
@@ -290,6 +293,16 @@ Response when failed:
   }
 }
 ```
+
+### `GET /api/budi95/queue/status`
+
+Returns PostgreSQL-backed async BUDI95 queue utilization. This endpoint requires the same client-IP allowlist and `x-api-key` as other BUDI95 routes.
+
+```bash
+curl -H "Host: localhost" -H "x-api-key: ..." http://127.0.0.1:8191/api/budi95/queue/status
+```
+
+`pending` is waiting work, `processing` approximates active scheduled-worker work, and `available` is remaining admission capacity. `worker.max_concurrent_solves` is the configured host-wide Chrome limit; the cron/systemd worker process may be absent between invocations. Database failure returns a generic HTTP `503`.
 
 ### `GET /api/health`
 

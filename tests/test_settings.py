@@ -136,6 +136,8 @@ class Phase1SettingsTest(unittest.TestCase):
             "PORT": 1,
             "JOB_QUEUE_CAPACITY": 1,
             "JOB_QUEUE_RETRY_AFTER_SECONDS": 1,
+            "BUDI95_SUBMIT_RATE_LIMIT_PER_MINUTE": 0,
+            "BUDI95_READ_RATE_LIMIT_PER_MINUTE": 0,
             "JOB_BATCH_LIMIT": 1,
             "JOB_MAX_ATTEMPTS": 1,
             "JOB_RESET_STALE_MINUTES": 0,

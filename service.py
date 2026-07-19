@@ -42,6 +42,9 @@ _settings: Settings | None = None
 _active_count = 0
 _queued_count = 0
 _count_lock = threading.Condition()
+_rate_limit_lock = threading.Lock()
+_rate_limit_buckets: dict[tuple[str, str], tuple[int, int]] = {}
+_rate_limit_max_buckets = 10_000
 _slot_wait_interval = 0.05
 _slot_acquirer = chrome_slots.try_acquire
 _xvfb_proc: Optional[subprocess.Popen] = None
@@ -187,6 +190,51 @@ def _api_key_valid(headers: list[tuple[bytes, bytes]]) -> bool:
     )
 
 
+def _rate_limit_kind(method: str, path: str) -> str | None:
+    if method == "POST" and path in {"/api/budi95", "/api/budi95/", "/api/solve/"}:
+        return "submit"
+    result_prefix = "/api/budi95/result/"
+    if method == "GET" and (
+        path == "/api/budi95/config"
+        or path == "/api/budi95/queue/status"
+        or path.startswith(result_prefix) and "/" not in path[len(result_prefix) :] and len(path) > len(result_prefix)
+    ):
+        return "read"
+    return None
+
+
+def _rate_limit(client: str, kind: str, now: float | None = None) -> int | None:
+    if _settings is None:
+        return None
+    try:
+        client = str(ipaddress.ip_address(client))
+    except ValueError:
+        return 60
+    limit = (
+        getattr(_settings, "budi95_submit_rate_limit_per_minute", 0)
+        if kind == "submit"
+        else getattr(_settings, "budi95_read_rate_limit_per_minute", 0)
+    )
+    if limit == 0:
+        return None
+    timestamp = time.time() if now is None else now
+    window = int(timestamp // 60)
+    key = (client, kind)
+    with _rate_limit_lock:
+        stale = [bucket_key for bucket_key, (bucket_window, _) in _rate_limit_buckets.items() if bucket_window < window]
+        for bucket_key in stale:
+            _rate_limit_buckets.pop(bucket_key, None)
+        if key not in _rate_limit_buckets and len(_rate_limit_buckets) >= _rate_limit_max_buckets:
+            return max(1, 60 - int(timestamp % 60))
+        bucket_window, count = _rate_limit_buckets.get(key, (window, 0))
+        if bucket_window != window:
+            bucket_window, count = window, 0
+        if count >= limit:
+            return max(1, 60 - int(timestamp % 60))
+        _rate_limit_buckets[key] = (bucket_window, count + 1)
+    return None
+
+
 class BusinessAccessMiddleware:
     def __init__(self, app):
         self.app = app
@@ -213,6 +261,18 @@ class BusinessAccessMiddleware:
             return await _plain_response(send, 401, b'{"detail":"Invalid API key."}')
         if not canonical:
             return await _plain_response(send, 400, b'{"detail":"Invalid request"}')
+        kind = _rate_limit_kind(scope["method"], scope["path"])
+        retry_after = _rate_limit(str(address), kind) if kind else None
+        if retry_after is not None:
+            await send({
+                "type": "http.response.start",
+                "status": status.HTTP_429_TOO_MANY_REQUESTS,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"retry-after", str(retry_after).encode("ascii")),
+                ],
+            })
+            return await send({"type": "http.response.body", "body": b'{"detail":"Rate limit exceeded"}'})
         return await self.app(scope, receive, send)
 
 

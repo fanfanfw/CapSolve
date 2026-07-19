@@ -73,6 +73,8 @@ class Settings:
     uvicorn_socket_gid: int | None
     job_queue_capacity: int
     job_queue_retry_after_seconds: int
+    budi95_submit_rate_limit_per_minute: int
+    budi95_read_rate_limit_per_minute: int
     job_batch_limit: int
     job_max_attempts: int
     job_reset_stale_minutes: int
@@ -308,6 +310,8 @@ def load_settings(component: str, values: Mapping[str, str] | None = None) -> Se
         uvicorn_socket_gid=uvicorn_socket_gid,
         job_queue_capacity=_integer(runtime_source, "JOB_QUEUE_CAPACITY", 100, 1),
         job_queue_retry_after_seconds=_integer(runtime_source, "JOB_QUEUE_RETRY_AFTER_SECONDS", 60, 1),
+        budi95_submit_rate_limit_per_minute=_integer(runtime_source, "BUDI95_SUBMIT_RATE_LIMIT_PER_MINUTE", 30, 0),
+        budi95_read_rate_limit_per_minute=_integer(runtime_source, "BUDI95_READ_RATE_LIMIT_PER_MINUTE", 120, 0),
         job_batch_limit=_integer(runtime_source, "JOB_BATCH_LIMIT", 5, 1),
         job_max_attempts=_integer(runtime_source, "JOB_MAX_ATTEMPTS", 3, 1),
         job_reset_stale_minutes=_integer(runtime_source, "JOB_RESET_STALE_MINUTES", 30, 0),

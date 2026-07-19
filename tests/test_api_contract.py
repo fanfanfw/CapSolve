@@ -85,6 +85,8 @@ class Phase2GoldenHttpTest(unittest.TestCase):
             job_queue_retry_after_seconds=17,
             job_max_attempts=4,
             job_reset_stale_minutes=30,
+            budi95_submit_rate_limit_per_minute=0,
+            budi95_read_rate_limit_per_minute=0,
             solver_timeout=45,
             local_post_timeout=30,
             sync_queue_max_waiting=0,
@@ -214,6 +216,61 @@ class Phase2GoldenHttpTest(unittest.TestCase):
         self.assert_json(response, 503, {"detail": "Job queue is unavailable"})
         self.assert_no_leak(response)
         self.assertNotIn(CANARY.lower(), output.getvalue().lower())
+
+    def test_rate_limit_route_classification_matches_real_routes_only(self) -> None:
+        self.assertEqual(service._rate_limit_kind("POST", "/api/budi95"), "submit")
+        self.assertEqual(service._rate_limit_kind("POST", "/api/budi95/"), "submit")
+        self.assertEqual(service._rate_limit_kind("GET", "/api/budi95/result/job-id"), "read")
+        self.assertEqual(service._rate_limit_kind("GET", "/api/budi95/queue/status"), "read")
+        self.assertIsNone(service._rate_limit_kind("GET", "/api/budi95/result/"))
+        self.assertIsNone(service._rate_limit_kind("GET", "/api/budi95/result/job-id/extra"))
+        self.assertIsNone(service._rate_limit_kind("POST", "/api/budi95/not-a-route"))
+
+    def test_budi95_rate_limits_are_separate_per_client_and_kind(self) -> None:
+        self.settings.budi95_submit_rate_limit_per_minute = 1
+        self.settings.budi95_read_rate_limit_per_minute = 2
+        with service._rate_limit_lock:
+            service._rate_limit_buckets.clear()
+        self.assertIsNone(service._rate_limit("192.0.2.10", "submit", 120.0))
+        self.assertEqual(service._rate_limit("192.0.2.10", "submit", 121.0), 59)
+        self.assertIsNone(service._rate_limit("192.0.2.11", "submit", 121.0))
+        self.assertIsNone(service._rate_limit("192.0.2.10", "read", 121.0))
+        self.assertIsNone(service._rate_limit("192.0.2.10", "read", 122.0))
+        self.assertEqual(service._rate_limit("192.0.2.10", "read", 123.0), 57)
+        self.assertIsNone(service._rate_limit("192.0.2.10", "submit", 180.0))
+
+    def test_equivalent_ipv6_spellings_share_one_rate_limit(self) -> None:
+        self.settings.budi95_read_rate_limit_per_minute = 1
+        with service._rate_limit_lock:
+            service._rate_limit_buckets.clear()
+        self.assertIsNone(service._rate_limit("2001:db8::1", "read", 120.0))
+        self.assertEqual(service._rate_limit("2001:0DB8:0:0:0:0:0:1", "read", 121.0), 59)
+
+    def test_rate_limit_bucket_count_is_hard_bounded(self) -> None:
+        self.settings.budi95_read_rate_limit_per_minute = 1
+        with service._rate_limit_lock:
+            service._rate_limit_buckets.clear()
+            service._rate_limit_buckets.update({(f"192.0.2.{index}", "read"): (2, 1) for index in range(service._rate_limit_max_buckets)})
+        self.assertEqual(service._rate_limit("198.51.100.1", "read", 121.0), 59)
+        self.assertEqual(len(service._rate_limit_buckets), service._rate_limit_max_buckets)
+        self.assertIsNone(service._rate_limit("198.51.100.1", "read", 180.0))
+
+    def test_rate_limited_business_request_returns_429_with_retry_after(self) -> None:
+        self.settings.budi95_read_rate_limit_per_minute = 1
+        with service._rate_limit_lock:
+            service._rate_limit_buckets.clear()
+        metrics = {
+            "queue_depth": 0,
+            "pending_count": 0,
+            "processing_count": 0,
+            "oldest_pending_age_seconds": None,
+            "stale_processing_count": 0,
+        }
+        with mock.patch.object(job_repository, "queue_metrics", return_value=metrics):
+            self.assertEqual(request("GET", "/api/budi95/queue/status")[0], 200)
+            response = request("GET", "/api/budi95/queue/status")
+        self.assert_json(response, 429, {"detail": "Rate limit exceeded"})
+        self.assertIn("retry-after", response[1])
 
     def test_malformed_type_canaries_are_generic_and_absent_from_logs(self) -> None:
         output = io.StringIO()
