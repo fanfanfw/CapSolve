@@ -483,7 +483,15 @@ def _release_sync_slot(slot) -> None:
             _count_lock.notify()
 
 
-@api_router.get("/health")
+@api_router.get(
+    "/health",
+    summary="API process health",
+    description=(
+        "Shallow liveness check for the API process. The workers, active, and queued fields "
+        "describe only the legacy synchronous POST /api/solve/ flow in this API process; "
+        "they are not BUDI95 PostgreSQL queue metrics. This endpoint does not check PostgreSQL."
+    ),
+)
 def health():
     with _count_lock:
         return {
@@ -494,7 +502,15 @@ def health():
         }
 
 
-@api_router.get("/ready")
+@api_router.get(
+    "/ready",
+    summary="PostgreSQL readiness",
+    description=(
+        "Checks whether PostgreSQL accepts a lightweight SELECT 1 query. Returns 200 when the "
+        "database is ready and 503 when unavailable. It does not check Chrome, BUDI95 upstream, "
+        "worker activity, or queue capacity."
+    ),
+)
 def ready():
     timeout = _settings.db_connect_timeout if _settings else 3
     try:
@@ -507,7 +523,16 @@ def ready():
     return {"status": "ready"}
 
 
-@api_router.post("/solve/")
+@api_router.post(
+    "/solve/",
+    summary="Legacy synchronous solve",
+    description=(
+        "Legacy synchronous flow that solves and posts within one request. Health endpoint "
+        "workers/active/queued counters refer only to this route. New integrations should use "
+        "POST /api/budi95 and poll GET /api/budi95/result/{ulid}."
+    ),
+    deprecated=True,
+)
 def solve_endpoint(
     nric: str = Query(..., min_length=1),
     timeout: int | None = Query(None, ge=1),
@@ -631,7 +656,15 @@ def get_budi95_result(
     return _get_budi95_result(ulid)
 
 
-@api_router.get("/budi95/queue/status")
+@api_router.get(
+    "/budi95/queue/status",
+    summary="BUDI95 asynchronous queue status",
+    description=(
+        "Reports PostgreSQL-backed BUDI95 queue capacity, pending and processing jobs, available "
+        "slots, oldest pending age, stale processing count, and configured Chrome concurrency. "
+        "Use this endpoint—not /api/health—to monitor asynchronous BUDI95 work."
+    ),
+)
 def get_budi95_queue_status(
     _: None = Depends(verify_client_ip),
     __: None = Depends(verify_api_key),

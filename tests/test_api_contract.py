@@ -299,6 +299,19 @@ class Phase2GoldenHttpTest(unittest.TestCase):
             self.assertEqual(response[1]["retry-after"], "17")
             self.assert_no_leak(response)
 
+    def test_openapi_explains_health_readiness_queue_and_legacy_sync(self) -> None:
+        schema = service.create_app(docs_enabled=True, allowed_hosts=()).openapi()
+        health = schema["paths"]["/api/health"]["get"]
+        ready = schema["paths"]["/api/ready"]["get"]
+        queue = schema["paths"]["/api/budi95/queue/status"]["get"]
+        solve = schema["paths"]["/api/solve/"]["post"]
+        self.assertIn("legacy synchronous", health["description"])
+        self.assertIn("does not check PostgreSQL", health["description"])
+        self.assertIn("PostgreSQL", ready["summary"])
+        self.assertIn("not /api/health", queue["description"])
+        self.assertTrue(solve["deprecated"])
+        self.assertIn("POST /api/budi95", solve["description"])
+
     def test_all_safe_result_states_and_health_match_head_golden(self) -> None:
         states = [
             {"status": "pending"},
