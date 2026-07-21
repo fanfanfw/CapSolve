@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import os
+from pathlib import Path
 import re
 import unittest
 import uuid
@@ -70,6 +71,9 @@ class Phase2PostgresRaceTest(unittest.TestCase):
                     )
                     """
                 )
+                cursor.execute(f'SET LOCAL search_path TO "{cls.schema}"')
+                cursor.execute("INSERT INTO budi95_jobs (ulid, nric) VALUES (%s, %s)", ("f" * 32, "legacy-row"))
+                cursor.execute((Path(__file__).parents[1] / "sql" / "002_job_attribution.sql").read_text(encoding="utf-8"))
         finally:
             conn.close()
         cls.backend_pids: set[int] = set()
@@ -89,6 +93,22 @@ class Phase2PostgresRaceTest(unittest.TestCase):
             cursor.execute("SELECT pg_backend_pid()")
             self.backend_pids.add(cursor.fetchone()[0])
         return conn
+
+    def test_migration_backfills_legacy_and_new_submit_stores_attribution(self) -> None:
+        with contextlib.closing(self.connection()) as conn, conn, conn.cursor() as cursor:
+            cursor.execute((Path(__file__).parents[1] / "sql" / "002_job_attribution.sql").read_text(encoding="utf-8"))
+            cursor.execute((Path(__file__).parents[1] / "sql" / "002_job_attribution.sql").read_text(encoding="utf-8"))
+        with contextlib.closing(self.connection()) as conn, conn, conn.cursor() as cursor:
+            cursor.execute("SELECT api_client_id, api_credential_id FROM budi95_jobs WHERE ulid = %s", ("f" * 32,))
+            self.assertEqual(cursor.fetchone(), ("legacy", "legacy"))
+        with mock.patch.object(database, "get_connection", side_effect=self.connection):
+            created = job_repository.create_job("attributed", max_attempts=3, capacity=10, client_id="staging", credential_id="stg-app-a")
+        with contextlib.closing(self.connection()) as conn, conn, conn.cursor() as cursor:
+            cursor.execute("SELECT api_client_id, api_credential_id FROM budi95_jobs WHERE ulid = %s", (created["ulid"],))
+            self.assertEqual(cursor.fetchone(), ("staging", "stg-app-a"))
+        with mock.patch.object(database, "get_connection", side_effect=self.connection):
+            metrics = job_repository.queue_metrics(30)
+        self.assertEqual(metrics["clients"]["staging"], {"pending": 1, "processing": 0, "depth": 1})
 
     def test_atomic_capacity_race_terminal_slots_and_capacity_reduction(self) -> None:
         def submit(index: int) -> bool:

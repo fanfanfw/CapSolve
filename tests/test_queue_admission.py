@@ -70,7 +70,7 @@ class Phase2AdmissionUnitTest(unittest.TestCase):
             ("SELECT COUNT(*) FROM budi95_jobs WHERE status IN ('pending', 'processing')", ()),
         )
         self.assertTrue(statements[2][0].startswith("INSERT INTO budi95_jobs"))
-        self.assertEqual(statements[2][1], ("a" * 32, "S1234567A", 4))
+        self.assertEqual(statements[2][1], ("a" * 32, "S1234567A", 4, "legacy", "legacy"))
         self.assertEqual(job, {"nric": "S1234567A", "ulid": "a" * 32})
         self.assertNotEqual(job_repository.QUEUE_ADMISSION_LOCK_KEY, 0)
         self.assertEqual(connection.close_count, 1)

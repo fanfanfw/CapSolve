@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import uuid
 from typing import Any
 
@@ -24,7 +25,7 @@ def new_ulid() -> str:
     return uuid.uuid4().hex
 
 
-def create_job(nric: str, max_attempts: int | None = None, capacity: int | None = None) -> Job:
+def create_job(nric: str, max_attempts: int | None = None, capacity: int | None = None, client_id: str = "legacy", credential_id: str = "legacy") -> Job:
     ulid = new_ulid()
     if max_attempts is None:
         max_attempts = int(os.environ.get("JOB_MAX_ATTEMPTS") or 3)
@@ -40,11 +41,11 @@ def create_job(nric: str, max_attempts: int | None = None, capacity: int | None 
                     raise QueueFullError
                 cursor.execute(
                     """
-                    INSERT INTO budi95_jobs (ulid, nric, max_attempts)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO budi95_jobs (ulid, nric, max_attempts, api_client_id, api_credential_id)
+                    VALUES (%s, %s, %s, %s, %s)
                     RETURNING *
                     """,
-                    (ulid, nric, max_attempts),
+                    (ulid, nric, max_attempts, client_id, credential_id),
                 )
                 return dict(cursor.fetchone())
     finally:
@@ -183,16 +184,41 @@ def queue_metrics(stale_minutes: int) -> dict[str, int | float | None]:
                   COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
                   COUNT(*) FILTER (WHERE status = 'processing') AS processing_count,
                   EXTRACT(EPOCH FROM (NOW() - MIN(created_at) FILTER (WHERE status = 'pending'))) AS oldest_pending_age_seconds,
-                  COUNT(*) FILTER (
-                    WHERE status = 'processing'
-                      AND %s > 0
-                      AND started_at < NOW() - (%s * INTERVAL '1 minute')
-                  ) AS stale_processing_count
-                FROM budi95_jobs
-                """,
-                (stale_minutes, stale_minutes),
-            )
+                   COUNT(*) FILTER (
+                     WHERE status = 'processing'
+                       AND %s > 0
+                       AND started_at < NOW() - (%s * INTERVAL '1 minute')
+                   ) AS stale_processing_count,
+                   COALESCE((
+                     SELECT jsonb_object_agg(api_client_id, jsonb_build_object(
+                       'pending', pending,
+                       'processing', processing,
+                       'depth', pending + processing
+                     ))
+                     FROM (
+                       SELECT api_client_id,
+                              COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                              COUNT(*) FILTER (WHERE status = 'processing') AS processing
+                       FROM budi95_jobs
+                       WHERE status IN ('pending', 'processing')
+                       GROUP BY api_client_id
+                     ) grouped_clients
+                   ), '{}'::jsonb) AS clients
+                 FROM budi95_jobs
+                 """,
+                 (stale_minutes, stale_minutes),
+             )
             row = dict(cursor.fetchone())
+            raw_clients = row.pop("clients", {})
+            clients = {
+                client_id: {
+                    "pending": int(values["pending"]),
+                    "processing": int(values["processing"]),
+                    "depth": int(values["depth"]),
+                }
+                for client_id, values in raw_clients.items()
+                if isinstance(client_id, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", client_id) and isinstance(values, dict)
+            }
             age = row["oldest_pending_age_seconds"]
             return {
                 "queue_depth": int(row["queue_depth"]),
@@ -200,6 +226,7 @@ def queue_metrics(stale_minutes: int) -> dict[str, int | float | None]:
                 "processing_count": int(row["processing_count"]),
                 "oldest_pending_age_seconds": max(0.0, float(age)) if age is not None else None,
                 "stale_processing_count": int(row["stale_processing_count"]),
+                "clients": clients,
             }
 
 

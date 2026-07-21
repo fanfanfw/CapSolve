@@ -104,7 +104,7 @@ def validate_artifacts() -> dict[str, int | str]:
     required_common = {"ENVIRONMENT", "JOB_RETENTION_HOURS", "DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_CONNECT_TIMEOUT"}
     if any(not required_common <= values.keys() for values in (api_env, worker_env, purge_env)):
         raise ValueError("environment examples omit required common settings")
-    if {"API_KEYS", "API_IP_ALLOWLIST", "ALLOWED_HOSTS", "FORWARDED_ALLOW_IPS", "UVICORN_UDS"} - api_env.keys():
+    if {"API_CLIENTS_FILE", "API_IP_ALLOWLIST", "ALLOWED_HOSTS", "FORWARDED_ALLOW_IPS", "UVICORN_UDS"} - api_env.keys():
         raise ValueError("API environment is incomplete")
     fallback = {"LOCAL_POST_URL", "TURNSTILE_SITEURL", "TURNSTILE_SITEKEY"}
     shared = fallback | {"GLOBAL_CHROME_SLOTS", "DISPLAY", "SOLVER_TIMEOUT", "LOCAL_POST_TIMEOUT"}

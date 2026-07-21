@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import ipaddress
+import json
 import os
 import re
+import stat
 from typing import Mapping
 
 
@@ -58,9 +60,28 @@ def parse_host(value: str) -> str:
 
 
 @dataclass(frozen=True)
+class ApiPrincipal:
+    client_id: str
+    credential_id: str
+
+
+@dataclass(frozen=True)
+class ApiCredential:
+    client_id: str
+    credential_id: str
+    key: str
+    submit_limit_per_minute: int | None = None
+    read_limit_per_minute: int | None = None
+    client_submit_limit_per_minute: int | None = None
+    client_read_limit_per_minute: int | None = None
+
+
+@dataclass(frozen=True)
 class Settings:
     environment: str
     api_keys: tuple[str, ...]
+    api_credentials: tuple[ApiCredential, ...]
+    api_clients_file: str | None
     api_ip_allowlist: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] | None
     allowed_hosts: tuple[str, ...]
     api_docs_enabled: bool
@@ -145,6 +166,89 @@ def _api_keys(values: Mapping[str, str], production: bool) -> tuple[str, ...]:
             ):
                 raise ValueError("API key configuration is invalid for production")
     return keys
+
+
+_API_ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+_MAX_API_CLIENTS_FILE_BYTES = 256 * 1024
+
+
+def _credential_key_valid(key: str, production: bool) -> bool:
+    return bool(key) and (not production or bool(
+        _PRODUCTION_KEY.fullmatch(key)
+        and key.lower() not in _PLACEHOLDER_KEYS
+        and not _production_key_is_repeated(key)
+    ))
+
+
+def _optional_limit(value, label: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label} must be an integer at least 0")
+    return value
+
+
+def _api_credentials(values: Mapping[str, str], production: bool, expected_uid: int) -> tuple[tuple[str, ...], tuple[ApiCredential, ...], str | None]:
+    path = values.get("API_CLIENTS_FILE", "").strip()
+    legacy_configured = bool(values.get("API_KEY", "").strip() or values.get("API_KEYS", "").strip())
+    if path:
+        if legacy_configured:
+            raise ValueError("API_CLIENTS_FILE cannot be combined with legacy API key configuration")
+        try:
+            if not os.path.isabs(path):
+                raise ValueError
+            before = os.lstat(path)
+            if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode) or before.st_uid != expected_uid or stat.S_IMODE(before.st_mode) != 0o600 or before.st_size > _MAX_API_CLIENTS_FILE_BYTES:
+                raise ValueError
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                current = os.fstat(descriptor)
+                if (
+                    (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino)
+                    or not stat.S_ISREG(current.st_mode)
+                    or current.st_uid != expected_uid
+                    or stat.S_IMODE(current.st_mode) != 0o600
+                    or current.st_size > _MAX_API_CLIENTS_FILE_BYTES
+                ):
+                    raise ValueError
+                raw = os.read(descriptor, _MAX_API_CLIENTS_FILE_BYTES + 1)
+                if len(raw) > _MAX_API_CLIENTS_FILE_BYTES:
+                    raise ValueError
+                data = json.loads(raw.decode("utf-8"))
+            finally:
+                os.close(descriptor)
+        except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            raise ValueError("API client registry is invalid or insecure") from None
+        if not isinstance(data, dict) or set(data) != {"clients"} or not isinstance(data["clients"], list) or not data["clients"]:
+            raise ValueError("API client registry is invalid or insecure")
+        credentials = []
+        client_ids, credential_ids, keys = set(), set(), set()
+        try:
+            for client in data["clients"]:
+                allowed_client = {"id", "submit_limit_per_minute", "read_limit_per_minute", "credentials"}
+                if not isinstance(client, dict) or not set(client) <= allowed_client:
+                    raise ValueError
+                client_id = client["id"]
+                entries = client["credentials"]
+                if not isinstance(client_id, str) or not _API_ID.fullmatch(client_id) or client_id in client_ids or not isinstance(entries, list) or not entries:
+                    raise ValueError
+                client_ids.add(client_id)
+                client_submit = _optional_limit(client.get("submit_limit_per_minute"), "client limit")
+                client_read = _optional_limit(client.get("read_limit_per_minute"), "client limit")
+                for entry in entries:
+                    if not isinstance(entry, dict) or not set(entry) <= {"id", "key", "submit_limit_per_minute", "read_limit_per_minute"}:
+                        raise ValueError
+                    credential_id, key = entry["id"], entry["key"]
+                    if not isinstance(credential_id, str) or not _API_ID.fullmatch(credential_id) or credential_id in credential_ids or not isinstance(key, str) or key in keys or not _credential_key_valid(key, production):
+                        raise ValueError
+                    credential_ids.add(credential_id)
+                    keys.add(key)
+                    credentials.append(ApiCredential(client_id, credential_id, key, _optional_limit(entry.get("submit_limit_per_minute"), "credential limit"), _optional_limit(entry.get("read_limit_per_minute"), "credential limit"), client_submit, client_read))
+        except (KeyError, ValueError, TypeError):
+            raise ValueError("API client registry is invalid or insecure") from None
+        return tuple(item.key for item in credentials), tuple(credentials), path
+    keys = _api_keys(values, production)
+    return keys, tuple(ApiCredential("legacy", f"legacy-{index}", key) for index, key in enumerate(keys, 1)), None
 
 
 def _api_allowlist(
@@ -258,7 +362,7 @@ def _group_id(values: Mapping[str, str], name: str, production: bool, default: i
     return int(raw)
 
 
-def load_settings(component: str, values: Mapping[str, str] | None = None) -> Settings:
+def load_settings(component: str, values: Mapping[str, str] | None = None, *, api_clients_file_uid: int | None = None) -> Settings:
     if component not in {"api", "worker", "purge"}:
         raise ValueError("unknown settings component")
     source = values if values is not None else os.environ
@@ -276,6 +380,8 @@ def load_settings(component: str, values: Mapping[str, str] | None = None) -> Se
         raise ValueError("ENABLE_XVFB_VIRTUAL_DISPLAY must be false in production")
 
     api_keys: tuple[str, ...] = ()
+    api_credentials: tuple[ApiCredential, ...] = ()
+    api_clients_file = None
     api_ip_allowlist = None
     allowed_hosts: tuple[str, ...] = ()
     api_docs_enabled = _boolean(runtime_source, "API_DOCS_ENABLED", not production)
@@ -285,7 +391,7 @@ def load_settings(component: str, values: Mapping[str, str] | None = None) -> Se
     uvicorn_socket_parent_gid = os.getgid()
     uvicorn_socket_gid = None
     if component == "api":
-        api_keys = _api_keys(source, production)
+        api_keys, api_credentials, api_clients_file = _api_credentials(source, production, os.getuid() if api_clients_file_uid is None else api_clients_file_uid)
         api_ip_allowlist = _api_allowlist(source, production)
         allowed_hosts = _allowed_hosts(source, production)
         forwarded_allow_ips = _forwarded_allow_ips(source, production)
@@ -298,6 +404,8 @@ def load_settings(component: str, values: Mapping[str, str] | None = None) -> Se
     return Settings(
         environment=environment,
         api_keys=api_keys,
+        api_credentials=api_credentials,
+        api_clients_file=api_clients_file,
         api_ip_allowlist=api_ip_allowlist,
         allowed_hosts=allowed_hosts,
         api_docs_enabled=api_docs_enabled,

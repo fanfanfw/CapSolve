@@ -26,7 +26,7 @@ import chrome_slots
 from config_resolver import resolve_budi95_config
 import database
 import job_repository
-from settings import Settings, load_settings, parse_host
+from settings import ApiCredential, ApiPrincipal, Settings, load_settings, parse_host
 from solver import load_dotenv, post_local_result, solve
 
 
@@ -34,6 +34,7 @@ API_HOST = "0.0.0.0"
 API_PORT = 8191
 MAX_WORKERS = 1
 API_KEYS: tuple[str, ...] = ()
+API_CREDENTIALS: tuple[ApiCredential, ...] = ()
 SOLVER_TIMEOUT = 45
 LOCAL_POST_TIMEOUT = 30
 UVICORN_ACCESS_LOG = False
@@ -119,13 +120,14 @@ def _event(event: str, **fields) -> None:
 
 
 def _configure() -> Settings:
-    global API_HOST, API_PORT, MAX_WORKERS, API_KEYS, SOLVER_TIMEOUT, LOCAL_POST_TIMEOUT, _settings
+    global API_HOST, API_PORT, MAX_WORKERS, API_KEYS, API_CREDENTIALS, SOLVER_TIMEOUT, LOCAL_POST_TIMEOUT, _settings
     load_dotenv()
     _settings = load_settings("api")
     API_HOST = _settings.api_host
     API_PORT = _settings.api_port
     MAX_WORKERS = _settings.max_workers
     API_KEYS = _settings.api_keys
+    API_CREDENTIALS = _settings.api_credentials
     SOLVER_TIMEOUT = _settings.solver_timeout
     LOCAL_POST_TIMEOUT = _settings.local_post_timeout
     return _settings
@@ -183,11 +185,20 @@ def _path_security(scope) -> tuple[bool, bool]:
     return business, canonical
 
 
-def _api_key_valid(headers: list[tuple[bytes, bytes]]) -> bool:
+def _credential_for_headers(headers: list[tuple[bytes, bytes]]) -> ApiCredential | None:
     values = [value for name, value in headers if name.lower() == b"x-api-key"]
-    return len(values) == 1 and any(
-        hmac.compare_digest(values[0], key.encode("ascii")) for key in API_KEYS if key.isascii()
-    )
+    if len(values) != 1:
+        return None
+    credentials = API_CREDENTIALS or tuple(ApiCredential("legacy", f"legacy-{index}", key) for index, key in enumerate(API_KEYS, 1))
+    match = None
+    for credential in credentials:
+        if credential.key.isascii() and hmac.compare_digest(values[0], credential.key.encode("ascii")):
+            match = credential
+    return match
+
+
+def _api_key_valid(headers: list[tuple[bytes, bytes]]) -> bool:
+    return _credential_for_headers(headers) is not None
 
 
 def _rate_limit_kind(method: str, path: str) -> str | None:
@@ -203,35 +214,42 @@ def _rate_limit_kind(method: str, path: str) -> str | None:
     return None
 
 
-def _rate_limit(client: str, kind: str, now: float | None = None) -> int | None:
+def _rate_limit(identity: ApiCredential | str, kind: str, now: float | None = None) -> int | None:
     if _settings is None:
         return None
-    try:
-        client = str(ipaddress.ip_address(client))
-    except ValueError:
-        return 60
-    limit = (
-        getattr(_settings, "budi95_submit_rate_limit_per_minute", 0)
-        if kind == "submit"
-        else getattr(_settings, "budi95_read_rate_limit_per_minute", 0)
-    )
-    if limit == 0:
+    if isinstance(identity, str):  # Legacy direct-test compatibility.
+        identity = ApiCredential(identity, identity, "")
+    global_limit = getattr(_settings, f"budi95_{kind}_rate_limit_per_minute", 0)
+    client_limit = getattr(identity, f"client_{kind}_limit_per_minute")
+    credential_limit = getattr(identity, f"{kind}_limit_per_minute")
+    layers = [
+        ((f"global:{kind}", "*"), global_limit),
+        ((f"client:{kind}", identity.client_id), client_limit),
+        ((f"credential:{kind}", identity.credential_id), credential_limit),
+    ]
+    enabled = [(key, limit) for key, limit in layers if limit]
+    if not enabled:
         return None
     timestamp = time.time() if now is None else now
     window = int(timestamp // 60)
-    key = (client, kind)
+    retry = max(1, 60 - int(timestamp % 60))
     with _rate_limit_lock:
-        stale = [bucket_key for bucket_key, (bucket_window, _) in _rate_limit_buckets.items() if bucket_window < window]
-        for bucket_key in stale:
-            _rate_limit_buckets.pop(bucket_key, None)
-        if key not in _rate_limit_buckets and len(_rate_limit_buckets) >= _rate_limit_max_buckets:
-            return max(1, 60 - int(timestamp % 60))
-        bucket_window, count = _rate_limit_buckets.get(key, (window, 0))
-        if bucket_window != window:
-            bucket_window, count = window, 0
-        if count >= limit:
-            return max(1, 60 - int(timestamp % 60))
-        _rate_limit_buckets[key] = (bucket_window, count + 1)
+        stale = [key for key, (bucket_window, _) in _rate_limit_buckets.items() if bucket_window < window]
+        for key in stale:
+            _rate_limit_buckets.pop(key, None)
+        new_keys = sum(key not in _rate_limit_buckets for key, _ in enabled)
+        if len(_rate_limit_buckets) + new_keys > _rate_limit_max_buckets:
+            return retry
+        current = []
+        for key, limit in enabled:
+            bucket_window, count = _rate_limit_buckets.get(key, (window, 0))
+            if bucket_window != window:
+                count = 0
+            if count >= limit:
+                return retry
+            current.append((key, count))
+        for key, count in current:
+            _rate_limit_buckets[key] = (window, count + 1)
     return None
 
 
@@ -257,12 +275,21 @@ class BusinessAccessMiddleware:
         key_headers = [value for name, value in scope["headers"] if name.lower() == b"x-api-key"]
         if not key_headers:
             return await _plain_response(send, 401, b'{"detail":"Missing x-api-key header."}')
-        if not _api_key_valid(scope["headers"]):
+        identity = _credential_for_headers(scope["headers"])
+        if identity is None:
             return await _plain_response(send, 401, b'{"detail":"Invalid API key."}')
         if not canonical:
             return await _plain_response(send, 400, b'{"detail":"Invalid request"}')
+        scope["api_identity"] = {
+            "client_id": identity.client_id,
+            "credential_id": identity.credential_id,
+            "submit_limit_per_minute": identity.submit_limit_per_minute,
+            "read_limit_per_minute": identity.read_limit_per_minute,
+            "client_submit_limit_per_minute": identity.client_submit_limit_per_minute,
+            "client_read_limit_per_minute": identity.client_read_limit_per_minute,
+        }
         kind = _rate_limit_kind(scope["method"], scope["path"])
-        retry_after = _rate_limit(str(address), kind) if kind else None
+        retry_after = _rate_limit(identity, kind) if kind else None
         if retry_after is not None:
             await send({
                 "type": "http.response.start",
@@ -363,30 +390,25 @@ def verify_client_ip(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
-def verify_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
+def verify_api_key(request: Request, x_api_key: str | None = Security(api_key_header)) -> ApiPrincipal:
+    identity = request.scope.get("api_identity")
+    if isinstance(identity, dict):
+        client_id = identity.get("client_id")
+        credential_id = identity.get("credential_id")
+        if isinstance(client_id, str) and isinstance(credential_id, str):
+            return ApiPrincipal(client_id, credential_id)
     if not API_KEYS:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="API key is not configured on server.",
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="API key is not configured on server.")
     if not x_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing x-api-key header.",
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing x-api-key header.")
     try:
         candidate = x_api_key.encode("ascii")
     except UnicodeEncodeError:
         candidate = b""
-    if not candidate or not any(
-        hmac.compare_digest(candidate, configured_key.encode("ascii"))
-        for configured_key in API_KEYS
-        if configured_key.isascii()
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key.",
-        )
+    credential = _credential_for_headers([(b"x-api-key", candidate)])
+    if credential is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key.")
+    return ApiPrincipal(credential.client_id, credential.credential_id)
 
 
 def _mask_sitekey(sitekey: str) -> str:
@@ -601,7 +623,7 @@ def get_budi95_config(
 def submit_budi95_job(
     request: Budi95SubmitRequest,
     _: None = Depends(verify_client_ip),
-    __: None = Depends(verify_api_key),
+    identity: ApiPrincipal = Depends(verify_api_key),
 ):
     nric = request.nric.strip()
     if not nric:
@@ -615,6 +637,8 @@ def submit_budi95_job(
             nric,
             _settings.job_max_attempts if _settings else None,
             _settings.job_queue_capacity if _settings else None,
+            identity.client_id,
+            identity.credential_id,
         )
     except job_repository.QueueFullError:
         _event("async_submit", outcome="rejected", reason="queue_full")
@@ -685,6 +709,7 @@ def get_budi95_queue_status(
         "available": max(capacity - depth, 0),
         "oldest_pending_age_seconds": metrics["oldest_pending_age_seconds"],
         "stale_processing": int(metrics["stale_processing_count"]),
+        "clients": metrics.get("clients", {}),
         "worker": {
             "model": "scheduled",
             "processing": int(metrics["processing_count"]),

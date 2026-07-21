@@ -138,10 +138,14 @@ def _secure_environment(path: Path, *, expected_uid: int = 0) -> dict[str, str]:
     return values
 
 
-def _validate_component_environments(directory: Path, *, expected_uid: int = 0) -> dict[str, dict[str, str]]:
+def _validate_component_environments(directory: Path, *, expected_uid: int = 0, api_uid: int | None = None) -> dict[str, dict[str, str]]:
     values = {component: _secure_environment(directory / f"{component}.env", expected_uid=expected_uid) for component in ("api", "worker", "purge", "backup")}
-    settings = {component: load_settings(component, values[component]) for component in ("api", "worker", "purge")}
-    inbound = {"API_KEY", "API_KEYS", "API_IP_ALLOWLIST", "ALLOWED_HOSTS", "API_DOCS_ENABLED", "FORWARDED_ALLOW_IPS", "UVICORN_UDS", "UVICORN_SOCKET_MODE", "UVICORN_SOCKET_GID", "UVICORN_SOCKET_PARENT_GID"}
+    settings = {
+        "api": load_settings("api", values["api"], api_clients_file_uid=expected_uid if api_uid is None else api_uid),
+        "worker": load_settings("worker", values["worker"]),
+        "purge": load_settings("purge", values["purge"]),
+    }
+    inbound = {"API_KEY", "API_KEYS", "API_CLIENTS_FILE", "API_IP_ALLOWLIST", "ALLOWED_HOSTS", "API_DOCS_ENABLED", "FORWARDED_ALLOW_IPS", "UVICORN_UDS", "UVICORN_SOCKET_MODE", "UVICORN_SOCKET_GID", "UVICORN_SOCKET_PARENT_GID"}
     fallback = {"LOCAL_POST_URL", "TURNSTILE_SITEURL", "TURNSTILE_SITEKEY"}
     private_solver = {"TS_PROFILE_DIR", "HOME", "BUDI95_CONFIG_CACHE_FILE"}
     shared_solver = {"DISPLAY", "ENABLE_XVFB_VIRTUAL_DISPLAY", "SOLVER_TIMEOUT", "LOCAL_POST_TIMEOUT", "BUDI95_AUTO_RESOLVE", "BUDI95_CONFIG_URL", "BUDI95_CONFIG_CACHE_SECONDS", "BUDI95_CONFIG_FETCH_TIMEOUT", "BUDI95_FORCE_ENV_CONFIG", *fallback}
@@ -164,7 +168,7 @@ def _validate_component_environments(directory: Path, *, expected_uid: int = 0) 
         any(set(values[component]) - allowed[component] for component in ("api", "worker", "purge"))
         or {"ENVIRONMENT", "JOB_RETENTION_HOURS", *database} - values["api"].keys()
         or {"API_IP_ALLOWLIST", "ALLOWED_HOSTS", "API_DOCS_ENABLED", "FORWARDED_ALLOW_IPS", "UVICORN_UDS", "UVICORN_SOCKET_GID", "GLOBAL_CHROME_SLOTS", *shared_solver, *private_solver} - values["api"].keys()
-        or not ({"API_KEY", "API_KEYS"} & values["api"].keys())
+        or not ({"API_KEY", "API_KEYS", "API_CLIENTS_FILE"} & values["api"].keys())
         or {"ENVIRONMENT", "JOB_RETENTION_HOURS", "JOB_BATCH_LIMIT", "JOB_MAX_ATTEMPTS", "JOB_RESET_STALE_MINUTES", "GLOBAL_CHROME_SLOTS", *database, *shared_solver, *private_solver} - values["worker"].keys()
         or {"ENVIRONMENT", "JOB_RETENTION_HOURS", "PURGE_BATCH_LIMIT", *database} - values["purge"].keys()
         or any(len({values[component][name] for component in ("api", "worker", "purge")}) != 1 for name in common)
@@ -488,7 +492,11 @@ def main() -> int:
         if not args.evidence:
             raise ValueError("evidence is required")
         evidence = _secure_json(Path(args.evidence))
-        component_environments = _validate_component_environments(Path(args.environment_directory))
+        try:
+            api_uid = pwd.getpwnam("capsolve-api").pw_uid
+        except KeyError:
+            api_uid = os.geteuid()
+        component_environments = _validate_component_environments(Path(args.environment_directory), api_uid=api_uid)
         now = datetime.now(timezone.utc)
         if args.static:
             validate(component_environments["purge"], evidence, now, unit_directory=Path(__file__).with_name("deployment"))

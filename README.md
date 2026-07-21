@@ -49,14 +49,43 @@ Production API startup requires a nonempty `API_KEY` or `API_KEYS`, explicit `AP
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Record only the provisioning method, operator/change reference, and time in deployment evidence; never record or log the generated value. Production keys must be 43–128 URL-safe characters. A nonempty `API_KEYS` comma-separated list fully replaces `API_KEY`, enabling explicit rotation without implicitly retaining the single key. `API_IP_ALLOWLIST` accepts comma-separated IPv4, IPv6, or CIDR values; `*` is development-only.
+Record only the provisioning method, operator/change reference, and time in deployment evidence; never record or log the generated value. Production keys must be 43–128 URL-safe characters. `API_CLIENTS_FILE` is the primary multi-credential configuration. Legacy `API_KEY`/`API_KEYS` remain supported temporarily and map jobs to `legacy`, but must not be combined with the registry. `API_IP_ALLOWLIST` accepts comma-separated IPv4, IPv6, or CIDR values; `*` is development-only.
+
+The registry is an absolute, owner-only (`0600`), non-symlink JSON file owned by the API process user:
+
+```json
+{
+  "clients": [
+    {
+      "id": "staging",
+      "submit_limit_per_minute": 5,
+      "read_limit_per_minute": 30,
+      "credentials": [
+        {"id": "stg-app-a", "key": "<generated-key>", "submit_limit_per_minute": 3, "read_limit_per_minute": 20},
+        {"id": "stg-app-b", "key": "<generated-key>"}
+      ]
+    },
+    {
+      "id": "production",
+      "submit_limit_per_minute": 30,
+      "read_limit_per_minute": 120,
+      "credentials": [
+        {"id": "prod-app-a", "key": "<generated-key>"}
+      ]
+    }
+  ]
+}
+```
+
+Client and credential IDs are lowercase identifiers. Missing client/credential limits disable only that layer; `0` also explicitly disables that layer. Environment submit/read limits remain global across all credentials in the API process. Each asynchronous job stores only `api_client_id` and `api_credential_id`; raw keys are never stored. Run `uv run python migrate_sql.py` before deploying this feature so existing rows are backfilled as `legacy`.
 
 The API validates inbound keys, allowlist, hosts, and all consumed integer/boolean settings. Worker and purge validation do not require inbound API security settings. Accepted boolean tokens are `1`, `true`, `yes`, `on`, `0`, `false`, `no`, and `off` (case-insensitive). Invalid or explicitly empty integer values fail validation. `JOB_RETENTION_HOURS` has the approved development default `24`, range `1..8760`, and is explicitly required for every production component.
 
 | Variable | Description |
 | --- | --- |
 | `ENVIRONMENT` | `development` or `production` |
-| `API_KEY` / `API_KEYS` | Inbound API key or explicit comma-separated rotation set |
+| `API_CLIENTS_FILE` | Primary owner-only JSON registry for multiple client and credential identities |
+| `API_KEY` / `API_KEYS` | Legacy inbound API key or comma-separated rotation set, attributed to client `legacy` |
 | `API_IP_ALLOWLIST` | Comma-separated IPv4/IPv6 networks; development may use `*` |
 | `ALLOWED_HOSTS` | Comma-separated hosts enforced by `TrustedHostMiddleware`; production forbids wildcards |
 | `API_DOCS_ENABLED` | Development toggle; production must be false, leaving docs/ReDoc/OpenAPI unregistered |
@@ -78,7 +107,7 @@ The API validates inbound keys, allowlist, hosts, and all consumed integer/boole
 
 Async admission is serialized by a dedicated PostgreSQL transaction advisory lock. Capacity counts only `pending` plus `processing`; `success` and `failed` rows do not occupy slots. A full queue returns HTTP `429` with `Retry-After` and `{"detail":"Job queue is full"}`. An unavailable database/admission path returns HTTP `503` with the same header and `{"detail":"Job queue is unavailable"}`.
 
-Application rate limits are fixed one-minute windows per resolved client IP after Host, IP allowlist, and API-key validation. `BUDI95_SUBMIT_RATE_LIMIT_PER_MINUTE` applies to `POST /api/budi95`, its trailing-slash alias, and legacy `POST /api/solve/`. `BUDI95_READ_RATE_LIMIT_PER_MINUTE` applies to config, result polling, and queue status. Exceeding either returns HTTP `429`, `Retry-After`, and `{"detail":"Rate limit exceeded"}`. Limits are per API process and reset on restart; use Cloudflare/nginx limits as an additional distributed edge layer when scaling beyond one process.
+Application rate limits are atomic fixed one-minute windows after Host, IP allowlist, and API-key validation. Registry credentials can have individual limits, credentials under one client can share client limits, and environment limits protect the API globally. `BUDI95_SUBMIT_RATE_LIMIT_PER_MINUTE` applies to `POST /api/budi95`, its trailing-slash alias, and legacy `POST /api/solve/`. `BUDI95_READ_RATE_LIMIT_PER_MINUTE` applies to config, result polling, and queue status. Exceeding either returns HTTP `429`, `Retry-After`, and `{"detail":"Rate limit exceeded"}`. Limits are per API process and reset on restart; use Cloudflare/nginx limits as an additional distributed edge layer when scaling beyond one process.
 
 ## Dynamic BUDI95 Config
 
@@ -302,7 +331,7 @@ Returns PostgreSQL-backed async BUDI95 queue utilization. This endpoint requires
 curl -H "Host: localhost" -H "x-api-key: ..." http://127.0.0.1:8191/api/budi95/queue/status
 ```
 
-`pending` is waiting work, `processing` approximates active scheduled-worker work, and `available` is remaining admission capacity. `worker.max_concurrent_solves` is the configured host-wide Chrome limit; the cron/systemd worker process may be absent between invocations. Database failure returns a generic HTTP `503`.
+`pending` is waiting work, `processing` approximates active scheduled-worker work, `available` is remaining shared admission capacity, and `clients` contains pending/processing/depth aggregates per client ID without credential IDs or raw keys. `worker.max_concurrent_solves` is the configured host-wide Chrome limit; the cron/systemd worker process may be absent between invocations. Database failure returns a generic HTTP `503`.
 
 ### `GET /api/health`
 

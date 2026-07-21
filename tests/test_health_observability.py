@@ -171,6 +171,7 @@ class Phase6WorkerSummaryTest(unittest.TestCase):
             "processing_count": 2,
             "oldest_pending_age_seconds": 12.5,
             "stale_processing_count": 1,
+            "clients": {},
         }
         connection = Connection(Cursor(row))
         with mock.patch.object(job_repository.database, "get_connection", return_value=connection):
@@ -188,6 +189,7 @@ class Phase6WorkerSummaryTest(unittest.TestCase):
             "processing_count": 1,
             "oldest_pending_age_seconds": None,
             "stale_processing_count": 0,
+            "clients": {},
         }
         connection = Connection(Cursor(row))
         with mock.patch.object(job_repository.database, "get_connection", return_value=connection):

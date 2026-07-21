@@ -135,7 +135,7 @@ class Phase7UnitTest(unittest.TestCase):
             production_preflight, "_secure_json", return_value=evidence(current)
         ), mock.patch.object(production_preflight, "_validate_component_environments", return_value={"purge": values}) as environments, mock.patch.dict(os.environ, {"ENVIRONMENT": "development"}, clear=True), contextlib.redirect_stdout(output):
             self.assertEqual(production_preflight.main(), 0)
-        environments.assert_called_once_with(Path("/etc/capsolve"))
+        environments.assert_called_once_with(Path("/etc/capsolve"), api_uid=os.geteuid())
         record = json.loads(output.getvalue())
         self.assertEqual(record["mode"], "static")
         self.assertFalse(record["operational_ready"])
@@ -178,6 +178,9 @@ class Phase7UnitTest(unittest.TestCase):
 
             directory = Path(temporary) / "environments"
             directory.mkdir()
+            registry = directory / "api-clients.json"
+            registry.write_text(json.dumps({"clients": [{"id": "production", "credentials": [{"id": "prod-app", "key": secrets.token_urlsafe(32)}]}]}), encoding="utf-8")
+            registry.chmod(0o600)
             examples = {"api": "api.env.example", "worker": "worker.env.example", "purge": "purge.env.example", "backup": "backup.env.example"}
             replacements = {
                 "<REQUIRED_GENERATED_URLSAFE_KEY>": secrets.token_urlsafe(32),
@@ -194,6 +197,7 @@ class Phase7UnitTest(unittest.TestCase):
             }
             for component, example in examples.items():
                 content = (Path("deployment") / example).read_text(encoding="utf-8")
+                content = content.replace("/etc/capsolve/api-clients.json", str(registry))
                 for old, new in replacements.items():
                     content = content.replace(old, new)
                 path = directory / f"{component}.env"
@@ -374,11 +378,15 @@ class Phase7UnitTest(unittest.TestCase):
         self.assertLess(api, runtime)
         self.assertIn("solver diagnostics may still be plain text", runbook)
 
+    def test_migration_files_run_base_before_attribution(self):
+        import migrate_sql
+        self.assertEqual([path.name for path in migrate_sql.sql_files()], ["001_budi95_jobs.sql", "002_job_attribution.sql"])
+
     def test_static_database_and_systemd_artifacts(self):
         postgres = Path("deployment/postgresql.conf.example").read_text()
         hba = Path("deployment/pg_hba.conf.example").read_text()
         grants = Path("deployment/postgres_least_privilege.sql").read_text()
-        schema = Path("sql/budi95_jobs.sql").read_text()
+        schema = Path("sql/001_budi95_jobs.sql").read_text()
         self.assertIn("listen_addresses = 'localhost'", postgres)
         self.assertNotRegex(postgres, r"listen_addresses\s*=\s*['\"](?:\*|0\.0\.0\.0|::)['\"]")
         self.assertNotRegex(hba, r"0\.0\.0\.0/0|::/0")
@@ -401,7 +409,7 @@ class Phase7PostgresTest(unittest.TestCase):
             with conn, conn.cursor() as cursor:
                 cursor.execute(f'CREATE SCHEMA "{cls.schema}"')
                 cursor.execute(f'SET LOCAL search_path = "{cls.schema}"')
-                sql = Path("sql/budi95_jobs.sql").read_text()
+                sql = Path("sql/001_budi95_jobs.sql").read_text()
                 cursor.execute(sql)
                 cursor.execute(sql)
         finally:
@@ -545,7 +553,7 @@ class Phase7PostgresTest(unittest.TestCase):
 
                 write_pgpass()
                 psql = ["psql", "-X", "--set", "ON_ERROR_STOP=1"]
-                result = subprocess.run([*psql, "--dbname=service=admin", "--file=sql/budi95_jobs.sql"], env=env, capture_output=True, text=True)
+                result = subprocess.run([*psql, "--dbname=service=admin", "--file=sql/001_budi95_jobs.sql"], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, safe_stderr(result))
                 grant = [*psql, "--dbname=service=admin", "-v", f"expected_db={source_name}", "-v", f"api_role={roles['api']}", "-v", f"worker_role={roles['worker']}", "-v", f"purge_role={roles['purge']}", "--file=deployment/postgres_least_privilege.sql"]
                 for _ in range(2):

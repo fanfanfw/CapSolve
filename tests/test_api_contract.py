@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from config_resolver import Budi95Config
 import job_repository
 import service
+from settings import ApiCredential
 
 
 API_KEY = "contract-test-key"
@@ -94,6 +95,7 @@ class Phase2GoldenHttpTest(unittest.TestCase):
         )
         self.patches = [
             mock.patch.object(service, "API_KEYS", (API_KEY,)),
+            mock.patch.object(service, "API_CREDENTIALS", ()),
             mock.patch.object(service, "_settings", self.settings),
             mock.patch.object(service, "MAX_WORKERS", 1),
             mock.patch.object(service, "_active_count", 0),
@@ -175,7 +177,7 @@ class Phase2GoldenHttpTest(unittest.TestCase):
                     request("POST", path, body={"nric": "  S1234567A  "}),
                     "submit_slash" if path.endswith("/") else "submit",
                 )
-                create.assert_called_once_with("S1234567A", 4, 3)
+                create.assert_called_once_with("S1234567A", 4, 3, "legacy", "legacy-1")
 
     def test_queue_status_reports_capacity_usage_and_worker_model(self) -> None:
         self.settings.job_queue_capacity = 3
@@ -199,6 +201,7 @@ class Phase2GoldenHttpTest(unittest.TestCase):
                     "available": 0,
                     "oldest_pending_age_seconds": 12.5,
                     "stale_processing": 1,
+                    "clients": {},
                     "worker": {"model": "scheduled", "processing": 1, "max_concurrent_solves": 1},
                 },
             )
@@ -217,6 +220,48 @@ class Phase2GoldenHttpTest(unittest.TestCase):
         self.assert_no_leak(response)
         self.assertNotIn(CANARY.lower(), output.getvalue().lower())
 
+    def test_fastapi_principal_uses_key_free_middleware_scope(self) -> None:
+        scope = {"api_identity": {"client_id": "staging", "credential_id": "stg-app-a", "submit_limit_per_minute": 3}}
+        principal = service.verify_api_key(mock.Mock(scope=scope), None)
+        self.assertEqual((principal.client_id, principal.credential_id), ("staging", "stg-app-a"))
+        self.assertNotIn("key", vars(principal))
+        self.assertNotIn(API_KEY, json.dumps(scope))
+
+    def test_multiple_credentials_resolve_to_client_and_credential_identity(self) -> None:
+        credentials = (
+            ApiCredential("staging", "stg-app-a", "staging-a"),
+            ApiCredential("staging", "stg-app-b", "staging-b"),
+            ApiCredential("production", "prod-app-a", "production-a"),
+        )
+        with mock.patch.object(service, "API_CREDENTIALS", credentials):
+            for key, expected in ((b"staging-a", ("staging", "stg-app-a")), (b"staging-b", ("staging", "stg-app-b")), (b"production-a", ("production", "prod-app-a"))):
+                identity = service._credential_for_headers([(b"x-api-key", key)])
+                self.assertEqual((identity.client_id, identity.credential_id), expected)
+            self.assertIsNone(service._credential_for_headers([(b"x-api-key", b"invalid")]))
+
+    def test_rate_limit_layers_are_atomic_and_rotation_shares_client_quota(self) -> None:
+        self.settings.budi95_submit_rate_limit_per_minute = 10
+        first = ApiCredential("staging", "stg-a", "", submit_limit_per_minute=2, client_submit_limit_per_minute=1)
+        second = ApiCredential("staging", "stg-b", "", submit_limit_per_minute=2, client_submit_limit_per_minute=1)
+        with service._rate_limit_lock:
+            service._rate_limit_buckets.clear()
+        self.assertIsNone(service._rate_limit(first, "submit", 120.0))
+        before = dict(service._rate_limit_buckets)
+        self.assertEqual(service._rate_limit(second, "submit", 121.0), 59)
+        self.assertEqual(service._rate_limit_buckets, before)
+        self.assertEqual(before[("global:submit", "*")][1], 1)
+        self.assertNotIn(("credential:submit", "stg-b"), before)
+
+    def test_zero_client_and_credential_limits_disable_only_those_layers(self) -> None:
+        self.settings.budi95_read_rate_limit_per_minute = 2
+        identity = ApiCredential("staging", "stg-a", "", read_limit_per_minute=0, client_read_limit_per_minute=0)
+        with service._rate_limit_lock:
+            service._rate_limit_buckets.clear()
+        self.assertIsNone(service._rate_limit(identity, "read", 120.0))
+        self.assertIsNone(service._rate_limit(identity, "read", 121.0))
+        self.assertEqual(service._rate_limit(identity, "read", 122.0), 58)
+        self.assertEqual(set(service._rate_limit_buckets), {("global:read", "*")})
+
     def test_rate_limit_route_classification_matches_real_routes_only(self) -> None:
         self.assertEqual(service._rate_limit_kind("POST", "/api/budi95"), "submit")
         self.assertEqual(service._rate_limit_kind("POST", "/api/budi95/"), "submit")
@@ -233,7 +278,7 @@ class Phase2GoldenHttpTest(unittest.TestCase):
             service._rate_limit_buckets.clear()
         self.assertIsNone(service._rate_limit("192.0.2.10", "submit", 120.0))
         self.assertEqual(service._rate_limit("192.0.2.10", "submit", 121.0), 59)
-        self.assertIsNone(service._rate_limit("192.0.2.11", "submit", 121.0))
+        self.assertEqual(service._rate_limit("192.0.2.11", "submit", 121.0), 59)
         self.assertIsNone(service._rate_limit("192.0.2.10", "read", 121.0))
         self.assertIsNone(service._rate_limit("192.0.2.10", "read", 122.0))
         self.assertEqual(service._rate_limit("192.0.2.10", "read", 123.0), 57)
