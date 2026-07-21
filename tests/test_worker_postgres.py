@@ -42,6 +42,8 @@ class Phase3PostgresWorkerTest(unittest.TestCase):
                       error TEXT,
                       attempts INTEGER NOT NULL DEFAULT 0,
                       max_attempts INTEGER NOT NULL DEFAULT 3,
+                      api_client_id VARCHAR(32) NOT NULL DEFAULT 'legacy',
+                      api_credential_id VARCHAR(32) NOT NULL DEFAULT 'legacy',
                       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                       started_at TIMESTAMPTZ,
@@ -71,11 +73,12 @@ class Phase3PostgresWorkerTest(unittest.TestCase):
             conn.close()
         self.connections = []
 
-    def connection(self):
+    def connection(self, *args, **kwargs):
+        del args, kwargs
         return psycopg2.connect(**self.connection_kwargs, options=f"-c search_path={self.schema}")
 
-    def tracked_connection(self):
-        conn = self.connection()
+    def tracked_connection(self, *args, **kwargs):
+        conn = self.connection(*args, **kwargs)
         self.connections.append(conn)
         return conn
 

@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS budi95_jobs (
   error TEXT,
   attempts INTEGER NOT NULL DEFAULT 0,
   max_attempts INTEGER NOT NULL DEFAULT 3,
+  api_client_id VARCHAR(32) NOT NULL DEFAULT 'legacy',
+  api_credential_id VARCHAR(32) NOT NULL DEFAULT 'legacy',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   started_at TIMESTAMPTZ,
@@ -25,4 +27,3 @@ ON budi95_jobs (ulid);
 
 CREATE INDEX IF NOT EXISTS idx_budi95_jobs_nric_created_at
 ON budi95_jobs (nric, created_at DESC);
-

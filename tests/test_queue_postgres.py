@@ -20,6 +20,12 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 
 def safe_test_connection_kwargs(url: str) -> dict:
+    """Build psycopg2 kwargs for disposable local Postgres only.
+
+    Auth: role from PGUSER (default postgres). Password from PGPASSWORD when set
+    (libpq also reads PGPASSWORD; we pass it explicitly so mocks and TCP auth match).
+    URL must not embed userinfo — keeps secrets out of argv/logs.
+    """
     parsed = urlsplit(url)
     database_name = parsed.path.removeprefix("/")
     if parsed.scheme not in {"postgres", "postgresql"}:
@@ -36,7 +42,14 @@ def safe_test_connection_kwargs(url: str) -> dict:
         port = parsed.port or 5432
     except ValueError:
         raise RuntimeError("TEST_DATABASE_URL contains an invalid port") from None
-    return {"host": parsed.hostname, "port": port, "dbname": database_name, "user": "postgres"}
+    user = os.environ.get("PGUSER", "postgres").strip() or "postgres"
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,62}", user):
+        raise RuntimeError("PGUSER must be a simple PostgreSQL role name")
+    kwargs: dict = {"host": parsed.hostname, "port": port, "dbname": database_name, "user": user}
+    password = os.environ.get("PGPASSWORD", "")
+    if password:
+        kwargs["password"] = password
+    return kwargs
 
 
 @unittest.skipUnless(TEST_DATABASE_URL, "TEST_DATABASE_URL is not set; disposable PostgreSQL race test skipped")
@@ -51,6 +64,7 @@ class Phase2PostgresRaceTest(unittest.TestCase):
         try:
             with conn, conn.cursor() as cursor:
                 cursor.execute(f'CREATE SCHEMA "{cls.schema}"')
+                # Pre-attribution shape: prove 002 upgrades existing installs.
                 cursor.execute(
                     f"""
                     CREATE TABLE "{cls.schema}".budi95_jobs (
@@ -87,7 +101,8 @@ class Phase2PostgresRaceTest(unittest.TestCase):
         finally:
             conn.close()
 
-    def connection(self):
+    def connection(self, *args, **kwargs):
+        del args, kwargs
         conn = psycopg2.connect(**self.connection_kwargs, options=f"-c search_path={self.schema}")
         with conn.cursor() as cursor:
             cursor.execute("SELECT pg_backend_pid()")
@@ -95,10 +110,12 @@ class Phase2PostgresRaceTest(unittest.TestCase):
         return conn
 
     def test_migration_backfills_legacy_and_new_submit_stores_attribution(self) -> None:
+        # Independent of capacity race: rebuild seed, re-run 002 for idempotency.
         with contextlib.closing(self.connection()) as conn, conn, conn.cursor() as cursor:
+            cursor.execute("TRUNCATE budi95_jobs RESTART IDENTITY")
+            cursor.execute("INSERT INTO budi95_jobs (ulid, nric) VALUES (%s, %s)", ("f" * 32, "legacy-row"))
             cursor.execute((Path(__file__).parents[1] / "sql" / "002_job_attribution.sql").read_text(encoding="utf-8"))
             cursor.execute((Path(__file__).parents[1] / "sql" / "002_job_attribution.sql").read_text(encoding="utf-8"))
-        with contextlib.closing(self.connection()) as conn, conn, conn.cursor() as cursor:
             cursor.execute("SELECT api_client_id, api_credential_id FROM budi95_jobs WHERE ulid = %s", ("f" * 32,))
             self.assertEqual(cursor.fetchone(), ("legacy", "legacy"))
         with mock.patch.object(database, "get_connection", side_effect=self.connection):
@@ -111,6 +128,11 @@ class Phase2PostgresRaceTest(unittest.TestCase):
         self.assertEqual(metrics["clients"]["staging"], {"pending": 1, "processing": 0, "depth": 1})
 
     def test_atomic_capacity_race_terminal_slots_and_capacity_reduction(self) -> None:
+        # Drop setUpClass seed so capacity race starts from zero outstanding jobs.
+        with contextlib.closing(self.connection()) as conn, conn, conn.cursor() as cursor:
+            cursor.execute("TRUNCATE budi95_jobs RESTART IDENTITY")
+        self.backend_pids.clear()
+
         def submit(index: int) -> bool:
             try:
                 job_repository.create_job(f"test-{index}", max_attempts=3, capacity=3)

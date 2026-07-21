@@ -1,5 +1,68 @@
 # CapSolve Production Readiness Plan
 
+## Status ringkas (repo vs ops)
+
+Tracked on branch `chore/production-ready-core` (base `main` @ `299b74a`).  
+Legend: **code** = proven by unit/contract tests or quality gate on this checkout; **ops** = requires operator, host install, sudo, or live secrets.
+
+### Core — code (AI / local)
+
+- [x] Quality gate static + unit/contract: `uv run python deployment/ops.py quality` → **PASS** (190 tests OK; 17 PostgreSQL integration skipped without disposable DB)
+- [x] Production fail-closed settings (API key, allowlist, hosts, docs off, retention required, UDS)
+- [x] Atomic queue admission contract + HTTP 429/503 + golden API success contract
+- [x] Worker JIT claim / fencing / sanitization (unit); lost-claim vs success separated
+- [x] Chrome unique profile + slot release paths + global slot settings (unit); Xvfb external path for production
+- [x] IP allowlist, API key, Host gate, forged-header rejection (unit + real Uvicorn/nginx where tools present)
+- [x] Health vs readiness split; worker freshness parser; structured non-PII events
+- [x] Purge + retention validation; production preflight static/runtime gates (unit/mocked)
+- [x] Deployment artifacts (systemd/nginx/cloudflared/env examples) validated by quality gate
+- [x] SQL migration `002_job_attribution.sql` present (apply on target DB before traffic)
+- [x] PostgreSQL integration suite via Docker disposable: `uv run python tools/with_disposable_postgres.py -- uv run python deployment/ops.py quality` → **PASS** (`postgres: ENABLED_LOCAL_DISPOSABLE`; capacity race, fencing, slots, purge, readiness)
+- [x] **code fix (this branch):** `sql/001` includes attribution columns; test fixtures accept `get_connection(statement_timeout=...)`; capacity race truncates seed; `PGUSER`/`PGPASSWORD` honored; `tools/with_disposable_postgres.py` for auth-free local gate
+
+### Core — ops (operator; AI cannot finish alone)
+
+- [ ] Disposable Postgres for full quality gate (`TEST_DATABASE_URL=postgresql://127.0.0.1:5432/<name_with_test>`, `PGPASSWORD` for role `postgres`)
+- [ ] Phase 0 baseline capture + restore-test + validate on deploy host
+- [ ] Deploy `main`/tip: `uv sync --frozen`, install units/env, non-root users
+- [ ] Run migrations including `002` on target DB
+- [ ] Production secrets: random API key(s), env files mode `0600`, separate API/worker/purge env
+- [ ] Network: explicit `API_IP_ALLOWLIST`, `ALLOWED_HOSTS`, UDS chain, docs off, PostgreSQL not public
+- [ ] Approve `JOB_RETENTION_HOURS` (e.g. 24); enable purge + backup timers; align backup retention
+- [ ] Static preflight → start Xvfb/API/worker/purge/backup → one scheduled backup + restore evidence → runtime preflight
+- [ ] Smoke: one approved E2E job; 401/403/docs-off checks; canary low volume (`GLOBAL_CHROME_SLOTS=1`)
+
+#### Operator: enable local disposable Postgres tests (dev machine)
+
+**Recommended (no host postgres password):** Docker disposable with known ephemeral password:
+
+```bash
+cd /path/to/CapSolve
+uv run python tools/with_disposable_postgres.py -- uv run python deployment/ops.py quality
+# expect postgres: ENABLED_LOCAL_DISPOSABLE and status PASS
+```
+
+**Or host Postgres:** name must contain `test`/`temp`/`disposable`; `PGUSER` (default `postgres`) + matching `PGPASSWORD` for TCP to `127.0.0.1`. Wrong password → `password authentication failed` (not a CapSolve logic bug).
+
+```bash
+export TEST_DATABASE_URL='postgresql://127.0.0.1:5432/capsolve_disposable_test'
+export PGUSER=postgres
+export PGPASSWORD='PASSWORD_THAT_MATCHES_THAT_ROLE'
+uv run python deployment/ops.py quality
+```
+
+Do not put user/password in the URL. Do not reuse a production DB.
+
+### Not core for soft launch (defer)
+
+- [ ] Three-round production benchmark + final concurrency numbers
+- [ ] Formal failed-ratio / oldest-pending alert thresholds
+- [ ] CI on GitHub; off-host backup copy; purge index `CONCURRENTLY`
+
+**Do not use branch `feat/api-access-queue-reliability` for this work** — it is a strict ancestor of current `main`. Work only on `main` or this branch.
+
+---
+
 ## 1. Tujuan
 
 Mempersiapkan CapSolve agar aman dan stabil untuk menerima submit BUDI95 dalam jumlah lebih banyak tanpa:
@@ -42,13 +105,20 @@ status IN ('pending', 'processing')
 
 Row `success` dan `failed` tidak mengonsumsi kapasitas antrean, tetapi tetap tunduk pada kebijakan retensi.
 
-Kondisi saat ini:
+Kondisi baseline historis (sebelum hardening di `main` tip; jangan dipakai sebagai status deploy):
 
 - `POST /api/budi95` dapat memasukkan job tanpa batas kapasitas.
 - `JOB_BATCH_LIMIT` hanya membatasi jumlah job yang diklaim worker; ini bukan ukuran queue.
 - Worker mengklaim satu batch di depan lalu memprosesnya secara serial.
 - Stale worker dapat menimpa status job yang sudah diklaim ulang.
 - API dan worker dapat memakai Chrome profile yang sama.
+
+Kondisi implementasi repo saat ini (code di `main` tip / branch ini):
+
+- Atomic queue capacity + advisory lock; full queue → HTTP 429; DB admission failure → 503.
+- Worker claims just-in-time with attempt fencing; stale finalization cannot overwrite newer claims (unit-proven; Postgres race suite when disposable DB enabled).
+- Unique per-solve Chrome profiles; host-wide `GLOBAL_CHROME_SLOTS` shared by API and worker.
+- Production fail-closed API key, IP allowlist, hosts, docs, UDS; retention required; purge + preflight tooling present.
 
 ## 4. Target Arsitektur
 
@@ -1148,54 +1218,64 @@ Jika schema migration additive diterapkan, versi lama harus tetap kompatibel den
 
 # Production Go-Live Checklist
 
+Items marked **code** are implemented and covered by local unit/contract tests (quality gate PASS without disposable Postgres). Items marked **ops** stay open until an operator verifies them on the deploy host.
+
 ## Security
 
-- [ ] API key production random dan berbeda dari development.
-- [ ] `.env` mode 600.
-- [ ] `ENVIRONMENT=production`.
-- [ ] `API_IP_ALLOWLIST` berisi IP/CIDR eksplisit.
-- [ ] `ALLOWED_HOSTS` hanya hostname production yang diperlukan.
-- [ ] `FORWARDED_ALLOW_IPS` hanya direct proxy tepercaya.
-- [ ] API docs disabled.
-- [ ] Uvicorn bind Unix socket berpermission dan tidak memiliki TCP listener production.
-- [ ] PostgreSQL tidak public.
-- [ ] Tidak ada secret/NRIC/token di log.
+- [ ] **ops** API key production random dan berbeda dari development.
+- [ ] **ops** `.env` / component env mode 600.
+- [ ] **ops** `ENVIRONMENT=production`.
+- [ ] **ops** `API_IP_ALLOWLIST` berisi IP/CIDR eksplisit.
+- [ ] **ops** `ALLOWED_HOSTS` hanya hostname production yang diperlukan.
+- [ ] **ops** `FORWARDED_ALLOW_IPS` hanya direct proxy tepercaya.
+- [x] **code** API docs disabled path enforced when `API_DOCS_ENABLED=false` / production.
+- [x] **code** Production rejects TCP `API_HOST`; requires permission-bound UDS.
+- [ ] **ops** Uvicorn UDS chain installed; no public TCP origin.
+- [ ] **ops** PostgreSQL tidak public.
+- [x] **code** Response/log sanitization unit-proven (no secret/NRIC in controlled events).
 
 ## Queue dan Worker
 
-- [ ] Queue capacity atomik aktif.
-- [ ] Queue full menghasilkan 429.
-- [ ] DB failure menghasilkan 503.
-- [ ] Claim just-in-time aktif.
-- [ ] Fencing stale claim lulus integration test.
-- [ ] Worker tidak overlap.
-- [ ] Aggregate Chrome API + worker dibatasi global slots.
-- [ ] Chrome profile unik.
-- [ ] Xvfb external stabil.
-- [ ] Concurrency sesuai hasil benchmark.
+- [x] **code** Queue capacity atomik (unit + contract).
+- [x] **code** Queue full menghasilkan 429.
+- [x] **code** DB failure menghasilkan 503.
+- [x] **code** Claim just-in-time (unit).
+- [ ] **ops**/integration Fencing stale claim lulus disposable-Postgres integration test on CI/host.
+- [x] **code** Worker oneshot non-overlap designed in systemd timer units.
+- [ ] **ops** Worker timer installed and proven non-overlapping on host.
+- [x] **code** Aggregate Chrome slots settings + unit release paths.
+- [ ] **ops**/integration Aggregate slots proven under real API+worker Postgres test.
+- [x] **code** Chrome profile unik (unit).
+- [ ] **ops** Xvfb external stabil on host.
+- [ ] **ops** Concurrency sesuai hasil benchmark (defer for soft launch: keep slots=1).
 
 ## Reliability
 
-- [ ] Health dan readiness benar.
-- [ ] Timeout DB, solver, dan upstream eksplisit.
-- [ ] Backup dan restore terbukti.
-- [ ] Restart API/worker diuji saat queue berisi job.
-- [ ] Resource limits tidak mematahkan Chrome.
+- [x] **code** Health dan readiness benar (unit).
+- [x] **code** Timeout DB, solver, dan upstream eksplisit di settings.
+- [ ] **ops** Backup dan restore terbukti (Phase 0 capture/restore-test).
+- [ ] **ops** Restart API/worker diuji saat queue berisi job.
+- [ ] **ops** Resource limits tidak mematahkan Chrome.
 
 ## Privacy
 
-- [ ] Retensi NRIC/hasil telah disetujui.
-- [ ] Purge timer aktif.
-- [ ] Backup retention selaras dengan data retention.
-- [ ] Akses database dan backup dibatasi.
+- [ ] **ops** Retensi NRIC/hasil telah disetujui (set `JOB_RETENTION_HOURS`).
+- [x] **code** Production requires retention; purge tool + preflight alignment checks exist.
+- [ ] **ops** Purge timer aktif.
+- [ ] **ops** Backup retention selaras dengan data retention.
+- [ ] **ops** Akses database dan backup dibatasi.
 
 ## Operations
 
-- [ ] Queue depth dan oldest pending termonitor.
-- [ ] Worker freshness termonitor.
-- [ ] Log rotation/journal retention aktif.
-- [ ] Alert threshold ditetapkan.
-- [ ] Runbook restart, rollback, key rotation, dan queue recovery tersedia.
+- [x] **code** Queue depth / oldest pending available without NRIC (metrics paths unit-proven).
+- [x] **code** Worker freshness checker present.
+- [ ] **ops** Queue depth dan oldest pending termonitor in production.
+- [ ] **ops** Worker freshness termonitor in production.
+- [x] **code** Journald retention artifact example present.
+- [ ] **ops** Journal retention installed/active.
+- [ ] **ops** Alert threshold ditetapkan.
+- [x] **code** Runbook restart, rollback, key rotation, dan queue recovery di `deployment/README.md`.
+- [ ] **ops** Runbook direview operator sebelum cutover.
 
 ---
 

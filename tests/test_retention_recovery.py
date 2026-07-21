@@ -412,6 +412,7 @@ class Phase7PostgresTest(unittest.TestCase):
                 sql = Path("sql/001_budi95_jobs.sql").read_text()
                 cursor.execute(sql)
                 cursor.execute(sql)
+                cursor.execute(Path("sql/002_job_attribution.sql").read_text())
         finally:
             conn.close()
 
@@ -432,7 +433,8 @@ class Phase7PostgresTest(unittest.TestCase):
         finally:
             conn.close()
 
-    def connection(self):
+    def connection(self, *args, **kwargs):
+        del args, kwargs
         return psycopg2.connect(**self.kwargs, options=f"-c search_path={self.schema}")
 
     def insert(self, marker, status, processed_at):

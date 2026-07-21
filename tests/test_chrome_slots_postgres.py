@@ -38,7 +38,10 @@ class Phase4PostgresSlotsTest(unittest.TestCase):
                     id BIGSERIAL PRIMARY KEY, ulid VARCHAR(32) NOT NULL UNIQUE, nric VARCHAR(32) NOT NULL,
                     status VARCHAR(20) NOT NULL DEFAULT 'pending', response_status_code INTEGER,
                     response_body JSONB, error TEXT, attempts INTEGER NOT NULL DEFAULT 0,
-                    max_attempts INTEGER NOT NULL DEFAULT 3, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    api_client_id VARCHAR(32) NOT NULL DEFAULT 'legacy',
+                    api_credential_id VARCHAR(32) NOT NULL DEFAULT 'legacy',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), started_at TIMESTAMPTZ, processed_at TIMESTAMPTZ,
                     CONSTRAINT status_check CHECK (status IN ('pending','processing','success','failed')))
                     """
@@ -55,7 +58,8 @@ class Phase4PostgresSlotsTest(unittest.TestCase):
         finally:
             conn.close()
 
-    def connection(self):
+    def connection(self, *args, **kwargs):
+        del args, kwargs
         return psycopg2.connect(**self.connection_kwargs, options=f"-c search_path={self.schema}")
 
     def test_two_slots_allow_api_and_worker_and_third_opens_no_chrome(self) -> None:
